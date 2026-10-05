@@ -9,7 +9,7 @@
       "version": "0.7.21-plana.1",
       "repository": "https://github.com/Plana-Solutions/cpa-session-archive",
       "homepage": "https://github.com/Plana-Solutions/cpa-session-archive",
-      "license": "MIT",
+      "license": "Apache-2.0",
       "tags": ["Management", "Archive", "ARM64"]
     }
   ]
