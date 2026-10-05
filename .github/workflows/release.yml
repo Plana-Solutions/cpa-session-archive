@@ -1,57 +1,61 @@
-name: release
+name: ARM64 release
+
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*-plana.*"]
   workflow_dispatch:
+
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
 jobs:
-  image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ghcr.io/linonetwo/cpa-session-archive
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
   binaries:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-arm-4
+    container: golang:1.24-bookworm
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          go-version: "1.24.x"
-          cache: true
-      - run: sudo apt-get update && sudo apt-get install -y gcc libc6-dev
-      - run: go test ./...
-      - run: |
+          persist-credentials: false
+      - name: Install build and verification tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends zip file python3
+      - name: Verify native ARM64 and run real dependency tests
+        run: |
+          test "$(uname -m)" = aarch64
+          go vet ./...
+          go test -count=1 ./...
+          go test -count=1 -race ./...
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Build and verify the plugin and collector
+        run: |
           mkdir dist
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -tags cshared -buildmode=c-shared -o dist/cpa-session-archive-linux-amd64.so ./cmd/cpa-session-archive
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o dist/cpa-session-collector-linux-amd64 ./cmd/cpa-session-collector
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -tags cshared -buildmode=c-shared -o dist/cpa-session-archive.so ./cmd/cpa-session-archive
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -o dist/cpa-session-collector-linux-arm64 ./cmd/cpa-session-collector
+          file dist/cpa-session-archive.so dist/cpa-session-collector-linux-arm64
+          python3 scripts/verify_arm64_release.py
+      - name: Package with CLIProxyAPI checksum filenames
+        shell: bash
+        run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          mkdir package
-          cp dist/cpa-session-archive-linux-amd64.so package/cpa-session-archive.so
-          (cd package && zip "../dist/cpa-session-archive_${version}_linux_amd64.zip" cpa-session-archive.so)
-          sha256sum "dist/cpa-session-archive_${version}_linux_amd64.zip" > dist/checksums.txt
-          sha256sum dist/* > dist/SHA256SUMS
-      - uses: softprops/action-gh-release@v2
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.7.21-plana.1"; fi
+          (cd dist && zip -X "cpa-session-archive_${version}_linux_arm64.zip" cpa-session-archive.so)
+          (cd dist && sha256sum -- *.zip > checksums.txt && sha256sum -- *.so *.h cpa-session-collector-linux-arm64 *.zip checksums.txt > SHA256SUMS && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: cpa-session-archive-linux-arm64
+          path: dist/
+          if-no-files-found: error
+      - name: Publish verified ARM64 assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: dist/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
