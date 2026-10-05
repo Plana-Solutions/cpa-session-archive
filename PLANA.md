@@ -7,3 +7,5 @@ The release workflow uses Depot's native ARM64 runner and Debian Bookworm with G
 Push a tag matching `v*-plana.*` to publish. Release `v0.7.21-plana.1` contains `cpa-session-archive_0.7.21-plana.1_linux_arm64.zip`, the standalone collector, and checksum files with bare asset filenames.
 
 Install from `Plana-Solutions/cpa-session-archive`, rather than the upstream store entry. The collector needs a separate private service and persistent database; keep its API private. Building these assets does not install the plugin or deploy the collector.
+
+In CPAMP, add `https://raw.githubusercontent.com/Plana-Solutions/cpa-session-archive/plana-arm64/registry.json` under Plugins → Plugin Store → Manage. Refresh and install the entry named **CPA Session Archive (Plana ARM64)**. Confirm `Plana-Solutions/cpa-session-archive` when prompted.

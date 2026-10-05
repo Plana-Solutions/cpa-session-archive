@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-session-archive",
+      "name": "CPA Session Archive (Plana ARM64)",
+      "description": "Plana ARM64 build of the CPA session archive plugin. Requires a separate private collector service.",
+      "author": "linonetwo / Plana-Solutions",
+      "version": "0.7.21-plana.1",
+      "repository": "https://github.com/Plana-Solutions/cpa-session-archive",
+      "homepage": "https://github.com/Plana-Solutions/cpa-session-archive",
+      "license": "MIT",
+      "tags": ["Management", "Archive", "ARM64"]
+    }
+  ]
+}
