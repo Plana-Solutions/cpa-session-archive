@@ -43,8 +43,13 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.7.21-plana.1"; fi
-          (cd dist && zip -X "cpa-session-archive_${version}_linux_arm64.zip" cpa-session-archive.so)
-          (cd dist && sha256sum -- *.zip > checksums.txt && sha256sum -- *.so *.h cpa-session-collector-linux-arm64 *.zip checksums.txt > SHA256SUMS && sha256sum --check SHA256SUMS)
+          (
+            cd dist
+            zip -X "cpa-session-archive_${version}_linux_arm64.zip" cpa-session-archive.so
+            sha256sum -- *.zip > checksums.txt
+            sha256sum -- *.so *.h cpa-session-collector-linux-arm64 *.zip checksums.txt > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: cpa-session-archive-linux-arm64
