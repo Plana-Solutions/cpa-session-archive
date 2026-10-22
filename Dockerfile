@@ -8,13 +8,14 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
-RUN go test ./... && mkdir -p /out && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -tags cshared -buildmode=c-shared -o /out/cpa-session-archive.so ./cmd/cpa-session-archive && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /out/cpa-session-collector ./cmd/cpa-session-collector
+RUN go test ./... && mkdir -p /out && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -tags cshared -buildmode=c-shared -o /out/cpa-session-archive.so ./cmd/cpa-session-archive && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /out/cpa-session-collector ./cmd/cpa-session-collector && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /out/cpa-session-import ./cmd/cpa-session-import
 FROM ${RUNTIME_IMAGE}
 LABEL org.opencontainers.image.source="https://github.com/linonetwo/cpa-session-archive"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 RUN useradd -r -u 10001 archive
 COPY --from=build /out/cpa-session-archive.so /plugin/cpa-session-archive.so
 COPY --from=build /out/cpa-session-collector /usr/local/bin/cpa-session-collector
-RUN chmod 0555 /plugin/cpa-session-archive.so /usr/local/bin/cpa-session-collector && mkdir /data && chown archive:archive /data
+COPY --from=build /out/cpa-session-import /usr/local/bin/cpa-session-import
+RUN chmod 0555 /plugin/cpa-session-archive.so /usr/local/bin/cpa-session-collector /usr/local/bin/cpa-session-import && mkdir /data && chown archive:archive /data
 USER archive
 ENTRYPOINT ["/usr/local/bin/cpa-session-collector"]

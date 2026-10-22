@@ -2,7 +2,7 @@
   "name": "cpa-session-archive-ui-tests",
   "private": true,
   "scripts": {
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --config playwright.real.config.cjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0"

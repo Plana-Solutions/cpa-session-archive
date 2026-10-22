@@ -734,6 +734,14 @@
           padding: 14px;
         }
       }
+      .external-import { background: #e5f2ff; color: #155a8d; }
+      .external-sources { margin-bottom: 18px; }
+      .external-sources summary { cursor: pointer; }
+      .external-source { border-top: 1px solid #dde2e8; padding: 16px 0; }
+      .external-source summary, .external-source dd, .native-event-meta { overflow-wrap: anywhere; }
+      .external-source dl { display: grid; grid-template-columns: minmax(90px, 130px) minmax(0, 1fr); gap: 8px; }
+      .external-source dt, .external-source dd { margin: 0; }
+      .native-event { margin: 12px 0; }
     </style>
   </head>
   <body>
@@ -774,6 +782,7 @@
             <h2 data-i18n="sessionsTitle"></h2>
             <div class="export-controls">
               <span id="resultCount" class="muted"></span
+              ><button id="importedSourcesButton" data-i18n="importedSources" onclick="ExternalArchive.toggleSources(this)"></button
               ><select id="allExportFormat">
                 <option value="archive" data-i18n="archiveFormat"></option>
                 <option value="sft" data-i18n="sftFormat"></option></select
@@ -783,6 +792,7 @@
               ></button>
             </div>
           </div>
+          <div id="importedSources" hidden></div>
           <div id="allDownloadNotice" class="download-notice"></div>
           <div class="table-wrap">
             <table>
@@ -821,6 +831,7 @@
         </div>
         <h2 id="detailTitle"></h2>
         <p id="detailMeta" class="muted"></p>
+        <div id="externalSources"></div>
         <div id="downloadNotice" class="download-notice"></div>
         <div id="detail"></div>
         <nav id="pagination" class="pagination">
@@ -932,6 +943,7 @@
         <p class="muted" data-i18n="loginHint"></p>
       </div>
     </div>
+    <script src="external.js"></script>
     <script>
       var messages = {
         zh: {
@@ -975,6 +987,7 @@
           jumpToPage: "跳到",
           pageInfo: "第 {page} / {pages} 页 · 共 {total} 条",
           sessionsTitle: "归档会话",
+          importedSources: "导入的原始文件",
           untitled: "未命名会话",
           storageUsed: "实际存储占用",
           connectTitle: "连接 CPA 管理 API",
@@ -1114,6 +1127,7 @@
           jumpToPage: "Go to",
           pageInfo: "Page {page} / {pages} · {total} records",
           sessionsTitle: "Archived sessions",
+          importedSources: "Imported sources",
           untitled: "Untitled session",
           storageUsed: "Storage used",
           connectTitle: "Connect to the CPA management API",
@@ -1277,6 +1291,10 @@
           "SELECT request_id FROM records WHERE session_id = ? ORDER BY started_at, id\n-- CAS payloads are expanded and emitted incrementally as archive or SFT JSONL",
       };
       var facetOrder = [
+        "source.kind",
+        "source.tool",
+        "source.host",
+        "source.account",
         "project.name",
         "workspace.name",
         "project.path",
@@ -1314,6 +1332,12 @@
         "stream",
       ];
       var facetLabelsZh = {
+        "source.kind": "来源",
+        "source.tool": "原始应用",
+        "source.host": "原始设备",
+        "source.account": "原始账户",
+        "source.session_id": "原始会话 ID",
+        "source.artifact": "原始文件",
         "project.name": "项目",
         "workspace.name": "工作区",
         "project.path": "路径",
@@ -1364,6 +1388,12 @@
         "request.path": "API 路径",
       };
       var facetLabelsEn = {
+        "source.kind": "Source",
+        "source.tool": "Original app",
+        "source.host": "Original host",
+        "source.account": "Original account",
+        "source.session_id": "Original session ID",
+        "source.artifact": "Original file",
         "project.name": "Project",
         "workspace.name": "Workspace",
         "project.path": "Path",
@@ -1421,6 +1451,9 @@
       function facetValueLabel(name, value) {
         if (name === "key.id" || name === "caller.scope") return keyName(value);
         var labels = {
+          "source.kind": {
+            "external-local-history": ExternalArchive.label("External import", "外部导入"),
+          },
           "request.kind": {
             turn: locale === "zh" ? "普通对话" : "Conversation turn",
             compaction: locale === "zh" ? "上下文压缩" : "Context compaction",
@@ -1765,6 +1798,9 @@
                   .filter(Boolean)
                   .join(" · ");
                 var sessionBadges = [];
+                sessionBadges.push(ExternalArchive.badge(row));
+                if (ExternalArchive.provenance(row))
+                  meta = ExternalArchive.provenance(row) + " · " + meta;
                 if ((row.thread_sources || []).indexOf("system") >= 0)
                   sessionBadges.push(
                     '<span class="kind-badge">' +
@@ -1827,6 +1863,7 @@
         detailRecords = [];
         detailSeenContent = new Set();
         document.getElementById("detail").innerHTML = "";
+        document.getElementById("externalSources").innerHTML = "";
         document.getElementById("detailTitle").textContent = displayText(
           selected.summary || selected.project || t("untitled"),
         );
@@ -1845,6 +1882,7 @@
           downloadExport("session");
         };
         await loadSessionPage(1);
+        await ExternalArchive.loadSources(id);
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
@@ -2035,9 +2073,10 @@
           esc(t("processStep", { number: number })) +
           " · " +
           esc(kindLabel(view.kind)) +
-          '</b><span class="muted">' +
+          '</b>' + ExternalArchive.badge(view) + '<span class="muted">' +
           esc(
             [
+              ExternalArchive.provenance(view),
               view.requested_model || view.model,
               localTime(view.started_at),
               (view.entries || []).filter(function (entry) {
@@ -2059,6 +2098,10 @@
         );
       }
       function renderTurnProcessBody(view, complete) {
+        if (ExternalArchive.isExternal(view))
+          return (view.entries || []).map(function (entry) {
+            return ExternalArchive.renderEntry(entry);
+          }).join("");
         var readable = [],
           tools = {},
           toolOrder = [];
@@ -2210,7 +2253,7 @@
           t("request") + " #" + number;
         var tools = ((record.facets || {})["tool.name"] || []).slice(0, 4);
         var responsePreview = record.response_preview || record.error || "";
-        var duplicate =
+        var duplicate = !ExternalArchive.isExternal(record) &&
           previous && previous.summary && previous.summary === record.summary;
         var retry = duplicate && record.outcome !== "succeeded";
         var displayTitle = duplicate
@@ -2263,14 +2306,10 @@
               "</div>"
             : "") +
           '</div><div class="muted ' +
-          (record.outcome === "succeeded" ? "status-success" : "status-error") +
+          (ExternalArchive.isExternal(record) ? "" : record.outcome === "succeeded" ? "status-success" : "status-error") +
           '">' +
           esc(
-            record.outcome +
-              " · " +
-              record.status_code +
-              " · " +
-              localTime(record.started_at),
+            ExternalArchive.status(record),
           ) +
           "</div></article>"
         );
@@ -2314,6 +2353,7 @@
           renderTimelineView(view);
       }
       function kindLabel(kind) {
+        if (kind === "native_event") return ExternalArchive.label("Native event", "原生事件");
         var keys = {
           turn: "kindTurn",
           retry: "kindRetry",
@@ -2343,7 +2383,10 @@
           context.push(
             esc(t("toolDefinitions", { count: view.tool_definitions })),
           );
-        var entries = (view.entries || []).map(renderTimelineEntry).join("");
+        var external = ExternalArchive.isExternal(view);
+        var entries = (view.entries || []).map(function (entry) {
+          return external ? ExternalArchive.renderEntry(entry) : renderTimelineEntry(entry);
+        }).join("");
         if (!entries && view.kind === "retry")
           entries =
             '<div class="context-summary">' + esc(t("retryNoDelta")) + "</div>";
@@ -2357,15 +2400,11 @@
           esc(view.kind) +
           '">' +
           esc(kindLabel(view.kind)) +
-          "</span><b>" +
+          "</span>" + ExternalArchive.badge(view) + "<b>" +
           esc(view.requested_model || view.model || "") +
           "</b></div><span>" +
           esc(
-            (view.outcome || "") +
-              " · " +
-              (view.status_code || "") +
-              " · " +
-              localTime(view.started_at),
+            [ExternalArchive.provenance(view), ExternalArchive.status(view)].filter(Boolean).join(" · "),
           ) +
           "</span></div>" +
           (context.length
@@ -2374,7 +2413,7 @@
           '<div class="conversation-stream">' +
           entries +
           "</div>" +
-          renderRawLinks() +
+          (external ? ExternalArchive.nativeMetadata(view) + ExternalArchive.nativeDiagnostics() : renderRawLinks()) +
           "</article>"
         );
       }
@@ -3096,14 +3135,8 @@
             esc(text) +
             "</pre></details>"
           );
-        var roleKey =
-          role === "assistant"
-            ? "assistantRole"
-            : role === "tool"
-              ? "toolRole"
-              : role === "compaction"
-                ? "compactionRole"
-                : "userRole";
+        var roleKey = {assistant: "assistantRole", tool: "toolRole", compaction: "compactionRole", user: "userRole"}[role];
+        var roleLabel = roleKey ? t(roleKey) : role;
         var preview = text.length > 4000 ? text.slice(0, 1400) + "…" : text;
         var id = text.length > 4000 ? retainFullText(text) : "";
         var full = id
@@ -3117,7 +3150,7 @@
           '<div class="message-bubble ' +
           esc(role) +
           '"><div class="message-role">' +
-          esc(t(roleKey) + (label ? " · " + label : "")) +
+          esc(roleLabel + (label ? " · " + label : "")) +
           '</div><div class="message-text">' +
           esc(preview) +
           "</div>" +

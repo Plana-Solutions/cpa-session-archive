@@ -14,19 +14,19 @@ import (
 )
 
 type TurnSummary struct {
-	TurnID       string   `json:"turn_id"`
-	SessionID    string   `json:"session_id"`
-	UserText     string   `json:"user_text,omitempty"`
-	FinalText    string   `json:"final_text,omitempty"`
-	Requests     int      `json:"requests"`
-	FirstAt      time.Time `json:"first_at"`
-	LastAt       time.Time `json:"last_at"`
-	KeyID        string   `json:"key_id,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Outcome      string   `json:"outcome,omitempty"`
-	StatusCode   int      `json:"status_code,omitempty"`
-	ToolNames    []string `json:"tool_names,omitempty"`
-	HasCompaction bool    `json:"has_compaction,omitempty"`
+	TurnID        string    `json:"turn_id"`
+	SessionID     string    `json:"session_id"`
+	UserText      string    `json:"user_text,omitempty"`
+	FinalText     string    `json:"final_text,omitempty"`
+	Requests      int       `json:"requests"`
+	FirstAt       time.Time `json:"first_at"`
+	LastAt        time.Time `json:"last_at"`
+	KeyID         string    `json:"key_id,omitempty"`
+	Model         string    `json:"model,omitempty"`
+	Outcome       string    `json:"outcome,omitempty"`
+	StatusCode    int       `json:"status_code,omitempty"`
+	ToolNames     []string  `json:"tool_names,omitempty"`
+	HasCompaction bool      `json:"has_compaction,omitempty"`
 }
 
 type TurnPage struct {
@@ -37,11 +37,11 @@ type TurnPage struct {
 }
 
 type TurnDetailPage struct {
-	Turn    TurnSummary          `json:"turn"`
+	Turn    TurnSummary           `json:"turn"`
 	Records []RequestTimelineView `json:"records"`
-	Total   int                  `json:"total"`
-	Limit   int                  `json:"limit"`
-	Offset  int                  `json:"offset"`
+	Total   int                   `json:"total"`
+	Limit   int                   `json:"limit"`
+	Offset  int                   `json:"offset"`
 }
 
 type turnGroup struct {
@@ -173,6 +173,13 @@ func (s *Store) fullTurnUserText(ctx context.Context, group turnGroup) string {
 }
 
 func (s *Store) sessionTurnGroups(ctx context.Context, sessionID string) ([]turnGroup, error) {
+	var native bool
+	if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM records WHERE session_id=? AND source_format='external-native-event')`, sessionID).Scan(&native); err != nil {
+		return nil, err
+	}
+	if native {
+		return s.externalTurnGroups(ctx, sessionID)
+	}
 	table := "records"
 	var projected int
 	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM turn_records WHERE session_id=?`, sessionID).Scan(&projected); err == nil && projected > 0 {
@@ -234,7 +241,7 @@ func (s *Store) sessionTurnGroups(ctx context.Context, sessionID string) ([]turn
 				turnID = derivedTurnID(sessionID, requestID)
 			}
 			groups = append(groups, turnGroup{
-				summary: TurnSummary{TurnID: turnID, SessionID: sessionID, UserText: cleanTurnText(summary), FirstAt: startedAt, LastAt: completedAt, KeyID: keyID, Model: firstNonEmpty(requestedModel, model), ToolNames: []string{}},
+				summary:    TurnSummary{TurnID: turnID, SessionID: sessionID, UserText: cleanTurnText(summary), FirstAt: startedAt, LastAt: completedAt, KeyID: keyID, Model: firstNonEmpty(requestedModel, model), ToolNames: []string{}},
 				explicitID: explicitID, normalizedSummary: normalized, toolNames: map[string]struct{}{},
 			})
 		}
