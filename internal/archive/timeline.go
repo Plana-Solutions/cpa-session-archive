@@ -12,11 +12,14 @@ import (
 )
 
 type TimelineEntry struct {
-	Role      string `json:"role"`
-	Text      string `json:"text,omitempty"`
-	Label     string `json:"label,omitempty"`
-	CallID    string `json:"call_id,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+	EventID   string     `json:"event_id,omitempty"`
+	ParentID  string     `json:"parent_id,omitempty"`
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+	Role      string     `json:"role"`
+	Text      string     `json:"text,omitempty"`
+	Label     string     `json:"label,omitempty"`
+	CallID    string     `json:"call_id,omitempty"`
+	Truncated bool       `json:"truncated,omitempty"`
 }
 
 type RequestTimelineView struct {
@@ -32,6 +35,7 @@ type RequestTimelineView struct {
 	StartedAt       time.Time           `json:"started_at"`
 	CompletedAt     time.Time           `json:"completed_at"`
 	Facets          map[string][]string `json:"facets,omitempty"`
+	Metadata        map[string]any      `json:"metadata,omitempty"`
 	Kind            string              `json:"kind"`
 	InputItems      int                 `json:"input_items"`
 	HistoryItems    int                 `json:"history_items"`
@@ -40,10 +44,9 @@ type RequestTimelineView struct {
 	Entries         []TimelineEntry     `json:"entries"`
 }
 
-// RequestTimelinePreview returns only searchable projections. It deliberately
-// avoids expanding the original request/response CAS payloads: those may
-// contain a complete stateless conversation and large attachments, and are
-// loaded only after the user opens the request/tool diagnostic route.
+// RequestTimelinePreview avoids expanding CPA transport payloads, which can
+// repeat entire conversations. Native imports contain one event per record
+// and are read directly.
 func (s *Store) RequestTimelinePreview(ctx context.Context, id string) (RequestTimelineView, error) {
 	var view RequestTimelineView
 	var responsePreview, startedRaw, completedRaw, facetsRaw string
@@ -74,6 +77,13 @@ func (s *Store) RequestTimelinePreview(ctx context.Context, id string) (RequestT
 	view.CompletedAt, _ = time.Parse(time.RFC3339Nano, completedRaw)
 	view.Facets = map[string][]string{}
 	_ = json.Unmarshal([]byte(facetsRaw), &view.Facets)
+	if firstTimelineFacet(view.Facets, "source.kind") == "external-local-history" {
+		record, loadErr := s.Request(ctx, id)
+		if loadErr != nil {
+			return RequestTimelineView{}, loadErr
+		}
+		return externalTimeline(record)
+	}
 	view.Kind = firstTimelineFacet(view.Facets, "request.kind")
 	if view.Kind == "compact" {
 		view.Kind = "compaction"
@@ -106,6 +116,9 @@ func (s *Store) RequestTimeline(ctx context.Context, id string) (RequestTimeline
 	current, err := s.Request(ctx, id)
 	if err != nil {
 		return RequestTimelineView{}, err
+	}
+	if current.SourceFormat == "external-native-event" || firstTimelineFacet(current.Facets, "source.kind") == "external-local-history" {
+		return externalTimeline(current)
 	}
 	var recordID int64
 	if err = s.DB.QueryRowContext(ctx, `SELECT id FROM records WHERE request_id=?`, id).Scan(&recordID); err != nil {

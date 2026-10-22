@@ -15,6 +15,9 @@ const pluginID = "cpa-session-archive"
 //go:embed web/index.html
 var managementHTML []byte
 
+//go:embed web/external.js
+var managementExternalJS []byte
+
 type managementRequest struct {
 	Method  string
 	Path    string
@@ -30,7 +33,7 @@ type managementResponse struct {
 
 func (p *Plugin) managementRegistration() map[string]any {
 	base := "/plugins/" + pluginID
-	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}}}
+	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
 }
 func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	var r managementRequest
@@ -42,14 +45,20 @@ func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	if r.Method == http.MethodGet && strings.HasPrefix(path, resource) {
 		status := http.StatusNotFound
 		body := []byte("not found")
-		if strings.TrimPrefix(path, resource) == "/index.html" {
+		contentType := "text/html; charset=utf-8"
+		switch strings.TrimPrefix(path, resource) {
+		case "/index.html":
 			status = http.StatusOK
 			body = managementHTML
+		case "/external.js":
+			status = http.StatusOK
+			body = managementExternalJS
+			contentType = "text/javascript; charset=utf-8"
 		}
 		return ok(managementResponse{
 			StatusCode: status,
 			Headers: http.Header{
-				"Content-Type":  []string{"text/html; charset=utf-8"},
+				"Content-Type":  []string{contentType},
 				"Cache-Control": []string{"no-store, max-age=0"},
 			},
 			Body: body,
@@ -81,6 +90,10 @@ func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 		target = "/v1/turns"
 	case r.Method == http.MethodGet && path == base+"/turn-text":
 		target = "/v1/turn-text"
+	case r.Method == http.MethodGet && path == base+"/external-sources":
+		target = "/v1/external-sources"
+	case r.Method == http.MethodGet && path == base+"/external-source":
+		target = "/v1/external-source-ticket"
 	case r.Method == http.MethodGet && path == base+"/export":
 		target = "/v1/export-tickets"
 		if id := r.Query.Get("id"); id != "" {

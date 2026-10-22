@@ -23,6 +23,15 @@ This project uses structural content-addressed storage:
 
 Exports transparently rehydrate the JSON structure, including repeated references to one attachment blob.
 
+## External coding histories
+
+Native session histories can be imported separately from captured CPA traffic.
+They appear as **External import**, with tool, host, account and original-session
+provenance. Raw revisions have SHA-256 checksums and downloadable source files.
+See [native import and recovery](docs/native-import.md) for supported formats,
+the server-local CLI and recovery checks. Native imports bypass CPA payload
+compaction; their original encrypted fields and event kinds remain intact.
+
 ## Architecture
 
     CPA native plugin -> bounded memory queue -> collector -> SQLite WAL + CAS blobs

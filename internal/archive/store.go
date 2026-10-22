@@ -33,6 +33,10 @@ type SessionSummary struct {
 	Summary       string   `json:"summary,omitempty"`
 	Kinds         []string `json:"kinds,omitempty"`
 	ThreadSources []string `json:"thread_sources,omitempty"`
+	SourceKind    string   `json:"source_kind,omitempty"`
+	SourceTool    string   `json:"source_tool,omitempty"`
+	SourceHost    string   `json:"source_host,omitempty"`
+	SourceAccount string   `json:"source_account,omitempty"`
 }
 type Stats struct {
 	Records         int64 `json:"records"`
@@ -91,6 +95,10 @@ func OpenStore(path string, storeUpstream bool) (*Store, error) {
 	}
 	_, _ = db.Exec(`ALTER TABLE previewed_requests ADD COLUMN version INTEGER NOT NULL DEFAULT 1`)
 	s := &Store{DB: db, DBPath: path, StoreUpstream: storeUpstream}
+	if e = s.initExternalStore(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	return s, nil
 }
 func gzipBytes(b []byte) []byte {
@@ -145,6 +153,13 @@ func (s *Store) PutBatch(batch []Record) error {
 		return e
 	}
 	defer tx.Rollback()
+	if e = s.putBatchTx(tx, batch, putPayload); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+func (s *Store) putBatchTx(tx *sql.Tx, batch []Record, payload func(*sql.Tx, []byte) (string, error)) error {
 	st, e := tx.Prepare(`INSERT INTO records(request_id,trace_id,session_id,key_id,summary,response_preview,source_format,requested_model,model,stream,outcome,status_code,error,started_at,completed_at,parent_response_id,response_id,original_ref,upstream_ref,response_ref,truncated,metadata_json,facets_json,original_request_gz,upstream_request_gz,response_gz) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL) ON CONFLICT(request_id) DO UPDATE SET outcome=excluded.outcome,status_code=excluded.status_code,error=excluded.error,completed_at=excluded.completed_at,response_id=excluded.response_id,response_ref=excluded.response_ref,truncated=excluded.truncated,summary=CASE WHEN COALESCE(records.summary,'')='' THEN excluded.summary ELSE records.summary END,response_preview=CASE WHEN COALESCE(records.response_preview,'')='' THEN excluded.response_preview ELSE records.response_preview END`)
 	if e != nil {
 		return e
@@ -163,18 +178,18 @@ func (s *Store) PutBatch(batch []Record) error {
 	}
 	defer turnSt.Close()
 	for _, r := range batch {
-		orig, e := putPayload(tx, r.OriginalRequest)
+		orig, e := payload(tx, r.OriginalRequest)
 		if e != nil {
 			return e
 		}
 		up := ""
 		if s.StoreUpstream {
-			up, e = putPayload(tx, r.UpstreamRequest)
+			up, e = payload(tx, r.UpstreamRequest)
 			if e != nil {
 				return e
 			}
 		}
-		resp, e := putPayload(tx, r.Response)
+		resp, e := payload(tx, r.Response)
 		if e != nil {
 			return e
 		}
@@ -200,7 +215,7 @@ func (s *Store) PutBatch(batch []Record) error {
 			return e
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func (s *Store) loadBlob(hash string) ([]byte, error) {
 	if hash == "" {
@@ -281,27 +296,7 @@ func (s *Store) Facets(ctx context.Context) ([]FacetCount, error) {
 	return out, rows.Err()
 }
 func (s *Store) Sessions(ctx context.Context, limit int) ([]SessionSummary, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT s.session_id,s.requests,s.first_at,s.last_at,s.key_id,s.model,s.project,s.summary,
-		COALESCE((SELECT GROUP_CONCAT(value,CHAR(31)) FROM session_facets f WHERE f.session_id=s.session_id AND f.name='request.kind'),''),
-		COALESCE((SELECT GROUP_CONCAT(value,CHAR(31)) FROM session_facets f WHERE f.session_id=s.session_id AND f.name='thread.source'),'')
-		FROM session_summaries s ORDER BY s.last_at DESC LIMIT ?`, limit)
-	if e != nil {
-		return nil, e
-	}
-	defer rows.Close()
-	out := []SessionSummary{}
-	for rows.Next() {
-		var x SessionSummary
-		var kinds, sources string
-		if e = rows.Scan(&x.SessionID, &x.Requests, &x.FirstAt, &x.LastAt, &x.KeyID, &x.Model, &x.Project, &x.Summary, &kinds, &sources); e != nil {
-			return nil, e
-		}
-		x.Kinds = splitProjectionValues(kinds)
-		x.ThreadSources = splitProjectionValues(sources)
-		x.Summary = cleanTurnText(x.Summary)
-		out = append(out, x)
-	}
-	return out, rows.Err()
+	return s.SessionsFiltered(ctx, limit, nil)
 }
 
 func (s *Store) SessionsFiltered(ctx context.Context, limit int, filters map[string]string) ([]SessionSummary, error) {
@@ -313,7 +308,11 @@ func (s *Store) SessionsFiltered(ctx context.Context, limit int, filters map[str
 	}
 	q := `SELECT s.session_id,s.requests,s.first_at,s.last_at,s.key_id,s.model,s.project,s.summary,
 		COALESCE((SELECT GROUP_CONCAT(value,CHAR(31)) FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='request.kind'),''),
-		COALESCE((SELECT GROUP_CONCAT(value,CHAR(31)) FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='thread.source'),'')
+		COALESCE((SELECT GROUP_CONCAT(value,CHAR(31)) FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='thread.source'),''),
+		COALESCE((SELECT value FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='source.kind' LIMIT 1),''),
+		COALESCE((SELECT value FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='source.tool' LIMIT 1),''),
+		COALESCE((SELECT value FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='source.host' LIMIT 1),''),
+		COALESCE((SELECT value FROM session_facets sf WHERE sf.session_id=s.session_id AND sf.name='source.account' LIMIT 1),'')
 		FROM session_summaries s`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -329,7 +328,7 @@ func (s *Store) SessionsFiltered(ctx context.Context, limit int, filters map[str
 	for rows.Next() {
 		var x SessionSummary
 		var kinds, sources string
-		if e = rows.Scan(&x.SessionID, &x.Requests, &x.FirstAt, &x.LastAt, &x.KeyID, &x.Model, &x.Project, &x.Summary, &kinds, &sources); e != nil {
+		if e = rows.Scan(&x.SessionID, &x.Requests, &x.FirstAt, &x.LastAt, &x.KeyID, &x.Model, &x.Project, &x.Summary, &kinds, &sources, &x.SourceKind, &x.SourceTool, &x.SourceHost, &x.SourceAccount); e != nil {
 			return nil, e
 		}
 		x.Kinds = splitProjectionValues(kinds)

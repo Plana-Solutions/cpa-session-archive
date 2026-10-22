@@ -27,6 +27,7 @@ type server struct {
 
 type exportTicket struct {
 	SessionID string
+	SourceID  string
 	Scope     string
 	Format    string
 	Filename  string
@@ -131,6 +132,8 @@ func main() {
 	http.HandleFunc("/v1/turns", s.turns)
 	http.HandleFunc("/v1/turn-text", s.turnText)
 	http.HandleFunc("/v1/export-tickets", s.exportTicket)
+	http.HandleFunc("/v1/external-sources", s.externalSources)
+	http.HandleFunc("/v1/external-source-ticket", s.externalSourceTicket)
 	http.HandleFunc("/archive-api/v1/exports/", s.ticketedExport)
 	http.HandleFunc("/v1/maintenance/gc", s.gc)
 	addr := env("LISTEN_ADDR", ":8080")
@@ -464,19 +467,6 @@ func (s *server) exportTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	random := make([]byte, 32)
-	if _, err := rand.Read(random); err != nil {
-		http.Error(w, "ticket unavailable", 500)
-		return
-	}
-	token := hex.EncodeToString(random)
-	s.ticketMu.Lock()
-	now := time.Now()
-	for key, item := range s.tickets {
-		if now.After(item.ExpiresAt) {
-			delete(s.tickets, key)
-		}
-	}
 	name := "cpa-"
 	if scope == "all" {
 		name += "all-sessions"
@@ -484,10 +474,30 @@ func (s *server) exportTicket(w http.ResponseWriter, r *http.Request) {
 		name += "session-" + safeFilename(sessionID)
 	}
 	name += "-" + format + ".jsonl"
-	expiresAt := now.Add(30 * time.Minute)
-	s.tickets[token] = exportTicket{SessionID: sessionID, Scope: scope, Format: format, Filename: name, ExpiresAt: expiresAt}
-	s.ticketMu.Unlock()
+	token, expiresAt, err := s.issueTicket(exportTicket{SessionID: sessionID, Scope: scope, Format: format, Filename: name})
+	if err != nil {
+		http.Error(w, "ticket unavailable", 500)
+		return
+	}
 	writeJSON(w, map[string]any{"url": "/archive-api/v1/exports/" + token, "filename": name, "content_type": "application/x-ndjson", "expires_at": expiresAt})
+}
+func (s *server) issueTicket(ticket exportTicket) (string, time.Time, error) {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return "", time.Time{}, err
+	}
+	token := hex.EncodeToString(random)
+	now := time.Now()
+	ticket.ExpiresAt = now.Add(30 * time.Minute)
+	s.ticketMu.Lock()
+	defer s.ticketMu.Unlock()
+	for key, item := range s.tickets {
+		if now.After(item.ExpiresAt) {
+			delete(s.tickets, key)
+		}
+	}
+	s.tickets[token] = ticket
+	return token, ticket.ExpiresAt, nil
 }
 func (s *server) ticketedExport(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.URL.Path, "/archive-api/v1/exports/")
@@ -500,6 +510,10 @@ func (s *server) ticketedExport(w http.ResponseWriter, r *http.Request) {
 	s.ticketMu.Unlock()
 	if !ok {
 		http.Error(w, "invalid or expired export ticket", 404)
+		return
+	}
+	if ticket.SourceID != "" {
+		s.streamExternalSource(w, r, ticket)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
