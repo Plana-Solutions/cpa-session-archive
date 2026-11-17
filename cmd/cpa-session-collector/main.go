@@ -17,12 +17,16 @@ import (
 )
 
 type server struct {
-	s            *archive.Store
-	q            chan archive.Record
-	ticketMu     sync.Mutex
-	tickets      map[string]exportTicket
-	turnTextMu   sync.Mutex
-	turnTextJobs map[string]bool
+	insightsMu       sync.Mutex
+	insightsSnapshot insightsSnapshot
+	insightsScanning bool
+	projectionReady  bool
+	s                *archive.Store
+	q                chan archive.Record
+	ticketMu         sync.Mutex
+	tickets          map[string]exportTicket
+	turnTextMu       sync.Mutex
+	turnTextJobs     map[string]bool
 }
 
 type exportTicket struct {
@@ -98,6 +102,7 @@ func main() {
 			}
 		}
 	}()
+	s := &server{s: st, q: make(chan archive.Record, 4096), tickets: map[string]exportTicket{}, turnTextJobs: map[string]bool{}}
 	if env("ARCHIVE_BACKFILL_TURN_PROJECTION", "true") == "true" {
 		go func() {
 			time.Sleep(2 * time.Second)
@@ -114,15 +119,18 @@ func main() {
 					continue
 				}
 				log.Printf("turn facet projection backfill complete")
+				s.projectionComplete()
 				break
 			}
 		}()
+	} else {
+		s.projectionComplete()
 	}
-	s := &server{s: st, q: make(chan archive.Record, 4096), tickets: map[string]exportTicket{}, turnTextJobs: map[string]bool{}}
 	go s.writer()
 	http.HandleFunc("/healthz", s.health)
 	http.HandleFunc("/ingest", s.ingest)
 	http.HandleFunc("/v1/stats", s.stats)
+	http.HandleFunc("/v1/insights", s.insights)
 	http.HandleFunc("/v1/facets", s.facets)
 	http.HandleFunc("/v1/sessions", s.sessions)
 	http.HandleFunc("/v1/sessions/", s.session)

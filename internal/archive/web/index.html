@@ -1,15 +1,40 @@
 <!doctype html>
-<html lang="zh-CN">
+<html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>会话归档</title>
     <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --surface: #101010;
+        --hover: #181818;
+        --text: #ededed;
+        --muted: #969696;
+        --border: #242424;
+        --anthropic: #d97757;
+        --openai: #e6e6e9;
+        --blue: #8caacb;
+        --other: #767676;
+        --success: #85b99c;
+        --danger: #e58b82;
+        --purple: #b09bc7;
+        --shadow: #0008;
+        --overlay: #000e;
+      }
+      * { box-sizing: border-box; }
+      a { color: var(--text); }
+      button, input, select, textarea { font: inherit; color: var(--text); }
+      input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+      button:hover, a:hover { color: var(--text); background: var(--hover); }
+      :focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
       body {
-        font: 14px system-ui;
+        font: 14px/1.5 system-ui, sans-serif;
+        font-variant-numeric: tabular-nums;
         margin: 0;
-        background: #f5f6f8;
-        color: #18202a;
+        background: var(--bg);
+        color: var(--text);
       }
       .wrap {
         max-width: 1500px;
@@ -27,9 +52,9 @@
       }
       .card,
       .panel {
-        background: white;
-        border: 1px solid #dde2e8;
-        border-radius: 10px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
         padding: 14px;
       }
       .card {
@@ -51,9 +76,9 @@
       .filters input,
       button {
         padding: 8px;
-        border: 1px solid #ccd3dc;
+        border: 1px solid var(--border);
         border-radius: 6px;
-        background: white;
+        background: var(--bg);
       }
       button {
         cursor: pointer;
@@ -61,28 +86,28 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        background: white;
+        background: var(--bg);
       }
       th,
       td {
-        padding: 9px;
-        border-bottom: 1px solid #edf0f3;
+        padding: 16px 12px;
+        border-bottom: 1px solid var(--border);
         text-align: left;
       }
       tr:hover {
-        background: #f1f7ff;
+        background: var(--hover);
       }
       .muted {
-        color: #667085;
+        color: var(--muted);
       }
       .error {
-        color: #b42318;
+        color: var(--danger);
       }
       .drawer {
         position: fixed;
         inset: 0 0 0 32%;
-        background: white;
-        box-shadow: -4px 0 20px #0003;
+        background: var(--bg);
+        box-shadow: -4px 0 20px var(--shadow);
         padding: 20px;
         overflow: auto;
         display: none;
@@ -93,7 +118,7 @@
       .route-page {
         display: none;
         min-height: 100vh;
-        background: #f5f6f8;
+        background: var(--bg);
         padding: 24px;
         box-sizing: border-box;
       }
@@ -105,14 +130,14 @@
         margin: auto;
       }
       .back-button {
-        background: #1769e0;
-        color: #fff;
-        border-color: #1769e0;
+        background: var(--blue);
+        color: var(--bg);
+        border-color: var(--blue);
         font-weight: 700;
         padding: 9px 14px;
       }
       .back-button:hover {
-        background: #0f55bd;
+        background: var(--blue);
       }
       .request-list-item {
         display: grid;
@@ -122,8 +147,8 @@
         cursor: pointer;
       }
       .request-list-item:hover {
-        border-color: #7aa7e8;
-        box-shadow: 0 2px 8px #1769e018;
+        border-color: var(--blue);
+        box-shadow: 0 2px 8px var(--shadow);
       }
       .turn-card {
         display: grid;
@@ -132,8 +157,8 @@
         cursor: pointer;
       }
       .turn-card:hover {
-        border-color: #7aa7e8;
-        box-shadow: 0 2px 8px #1769e018;
+        border-color: var(--blue);
+        box-shadow: 0 2px 8px var(--shadow);
       }
       .turn-primary {
         display: grid;
@@ -146,7 +171,7 @@
       .turn-primary h3 {
         margin: 0 0 7px;
         font-size: 13px;
-        color: #52606d;
+        color: var(--muted);
       }
       .turn-text {
         white-space: pre-wrap;
@@ -159,18 +184,18 @@
         max-height: none;
       }
       .turn-final {
-        border-left: 4px solid #10b981;
+        border-left: 4px solid var(--success);
         padding-left: 12px;
       }
       .placeholder-text {
-        color: #667085;
-        opacity: 0.62;
+        color: var(--muted);
+        opacity: 1;
         font-style: italic;
       }
       .process-step {
-        border: 1px solid #d9e1ea;
-        border-radius: 10px;
-        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
         margin: 10px 0;
         overflow: hidden;
       }
@@ -178,7 +203,7 @@
         cursor: pointer;
         padding: 11px 13px;
         font-weight: 650;
-        background: #f8fafc;
+        background: var(--surface);
       }
       .process-step-body {
         padding: 12px;
@@ -189,7 +214,7 @@
         display: flex;
         align-items: center;
         gap: 9px;
-        color: #667085;
+        color: var(--muted);
         opacity: 0.75;
       }
       .process-loading .spinner {
@@ -202,8 +227,8 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        border: 1px solid #fde68a;
-        background: #fffbeb;
+        border: 1px solid var(--border);
+        background: var(--surface);
         border-radius: 8px;
         padding: 9px 11px;
       }
@@ -220,7 +245,7 @@
         position: fixed;
         inset: 0;
         z-index: 100;
-        background: #f8fafce8;
+        background: var(--overlay);
         place-items: center;
       }
       .loading-overlay.open {
@@ -232,16 +257,16 @@
       .spinner {
         width: 30px;
         height: 30px;
-        border: 4px solid #dce7f7;
-        border-top-color: #1769e0;
+        border: 4px solid var(--border);
+        border-top-color: var(--blue);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
       .loading-sql {
         margin-top: 12px;
         max-height: 160px;
-        background: #111827;
-        color: #d1e4ff;
+        background: var(--surface);
+        color: var(--text);
       }
       @keyframes spin {
         to {
@@ -254,8 +279,8 @@
       pre {
         white-space: pre-wrap;
         word-break: break-word;
-        background: #111827;
-        color: #e5e7eb;
+        background: var(--surface);
+        color: var(--text);
         padding: 12px;
         border-radius: 8px;
         max-height: 45vh;
@@ -264,12 +289,69 @@
       .login {
         position: fixed;
         inset: 0;
-        background: #fff;
+        background: var(--bg);
         display: grid;
         place-items: center;
       }
-      .login > div {
-        width: 420px;
+      .login-card {
+        width: min(440px, calc(100vw - 32px));
+        display: grid;
+        gap: 18px;
+      }
+      .login-brand {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: .02em;
+      }
+      .login-card h1 {
+        margin: 0;
+        font-size: clamp(28px, 6vw, 38px);
+        font-weight: 650;
+        letter-spacing: -.035em;
+        line-height: 1.1;
+      }
+      .login-hint {
+        margin: -6px 0 10px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .login-field {
+        display: grid;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .login-field input {
+        width: 100%;
+        height: 44px;
+        padding: 0 14px;
+        font-size: 15px;
+        font-weight: 400;
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      .login-field input:focus {
+        outline: none;
+        border-color: var(--muted);
+      }
+      .login-submit {
+        height: 44px;
+        margin-top: 6px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--text);
+        color: var(--bg);
+        font-weight: 650;
+        cursor: pointer;
+      }
+      .login-submit:hover {
+        background: #fff;
+        color: var(--bg);
+      }
+      .login-card .error:empty {
+        display: none;
       }
       .facet-more {
         max-height: 220px;
@@ -298,7 +380,7 @@
         gap: 10px;
       }
       .facet-group {
-        border: 1px solid #e2e7ed;
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 8px;
       }
@@ -321,16 +403,16 @@
       .facet-grid select {
         width: 100%;
         padding: 8px;
-        border: 1px solid #ccd3dc;
+        border: 1px solid var(--border);
         border-radius: 6px;
-        background: white;
+        background: var(--bg);
       }
       .filter-head input,
       .filter-actions input {
         padding: 8px;
-        border: 1px solid #ccd3dc;
+        border: 1px solid var(--border);
         border-radius: 6px;
-        background: white;
+        background: var(--bg);
       }
       .filter-actions {
         margin-top: 12px;
@@ -339,19 +421,19 @@
         margin: 8px 0;
       }
       .chip {
-        background: #eaf2ff;
-        color: #184b8a;
+        background: var(--surface);
+        color: var(--blue);
         border-radius: 999px;
         padding: 4px 9px;
       }
       .facet-meta {
         font-size: 12px;
-        color: #667085;
+        color: var(--muted);
       }
       .empty {
         padding: 28px;
         text-align: center;
-        color: #667085;
+        color: var(--muted);
       }
       .facet-badges {
         display: flex;
@@ -360,7 +442,7 @@
         margin: 8px 0;
       }
       .facet-badges span {
-        background: #eef2f6;
+        background: var(--surface);
         border-radius: 5px;
         padding: 3px 6px;
         font-size: 12px;
@@ -370,25 +452,7 @@
         grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
         min-height: 100vh;
       }
-      .sidebar {
-        border-right: 1px solid #dde2e8;
-        background: #fff;
-        padding: 16px;
-      }
-      .sidebar > details {
-        position: sticky;
-        top: 16px;
-        max-height: calc(100vh - 32px);
-        overflow: auto;
-      }
-      .sidebar summary {
-        cursor: pointer;
-        font-size: 16px;
-        font-weight: 700;
-        display: flex;
-        justify-content: space-between;
-        padding: 8px 2px 14px;
-      }
+
       .content {
         min-width: 0;
         padding: 24px;
@@ -412,21 +476,16 @@
         align-items: center;
         justify-content: space-between;
         padding: 16px;
-        border-bottom: 1px solid #edf0f3;
+        border-bottom: 1px solid var(--border);
       }
       .section-head h2 {
         margin: 0;
         font-size: 17px;
       }
-      .table-wrap {
-        overflow: auto;
-      }
-      tbody tr {
-        cursor: pointer;
-      }
+
       .conversation-title {
         font-weight: 650;
-        max-width: 680px;
+        max-width: min(680px, 48vw);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -434,14 +493,14 @@
       .conversation-meta {
         margin-top: 4px;
         font-size: 12px;
-        color: #667085;
+        color: var(--muted);
       }
       .key-pill,
       .badge {
         display: inline-block;
         border-radius: 999px;
         padding: 3px 8px;
-        background: #eef2f6;
+        background: var(--surface);
         font-size: 12px;
         max-width: 240px;
         overflow: hidden;
@@ -457,7 +516,7 @@
         grid-template-columns: 1fr;
       }
       .facet-group {
-        background: #fafbfc;
+        background: var(--bg);
       }
       .filter-actions {
         display: grid;
@@ -482,7 +541,7 @@
         position: sticky;
         top: -20px;
         padding: 12px 0;
-        background: white;
+        background: var(--bg);
         z-index: 2;
         display: flex;
         gap: 8px;
@@ -505,31 +564,31 @@
         margin: 12px 0;
       }
       .message-bubble {
-        border: 1px solid #e1e7ee;
-        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
         padding: 10px 12px;
-        background: #f8fafc;
+        background: var(--surface);
       }
       .message-bubble.user {
-        border-left: 4px solid #3b82f6;
-        background: #eff6ff;
+        border-left: 4px solid var(--blue);
+        background: var(--surface);
       }
       .message-bubble.assistant {
-        border-left: 4px solid #10b981;
-        background: #ecfdf5;
+        border-left: 4px solid var(--success);
+        background: var(--surface);
       }
       .message-bubble.tool {
-        border-left: 4px solid #f59e0b;
-        background: #fffbeb;
+        border-left: 4px solid var(--anthropic);
+        background: var(--surface);
       }
       .message-bubble.compaction {
-        border-left: 4px solid #8b5cf6;
-        background: #f5f3ff;
+        border-left: 4px solid var(--purple);
+        background: var(--surface);
       }
       .message-role {
         font-size: 12px;
         font-weight: 700;
-        color: #475467;
+        color: var(--muted);
         margin-bottom: 6px;
       }
       .message-text {
@@ -538,8 +597,8 @@
         line-height: 1.55;
       }
       .context-summary {
-        color: #667085;
-        background: #f2f4f7;
+        color: var(--muted);
+        background: var(--surface);
         border-radius: 8px;
         padding: 8px 10px;
         margin: 8px 0;
@@ -553,7 +612,7 @@
         gap: 5px 12px;
       }
       .technical-meta dt {
-        color: #667085;
+        color: var(--muted);
       }
       .technical-meta dd {
         margin: 0;
@@ -564,7 +623,7 @@
       }
       .request-snippet {
         margin-top: 8px;
-        color: #344054;
+        color: var(--text);
         line-height: 1.5;
         display: -webkit-box;
         -webkit-line-clamp: 3;
@@ -573,7 +632,7 @@
       }
       .response-snippet {
         margin-top: 6px;
-        color: #08745b;
+        color: var(--success);
         line-height: 1.5;
         display: -webkit-box;
         -webkit-line-clamp: 2;
@@ -602,30 +661,30 @@
         padding: 3px 9px;
         font-size: 12px;
         font-weight: 700;
-        background: #eef2ff;
-        color: #4338ca;
+        background: var(--surface);
+        color: var(--blue);
         margin-right: 8px;
       }
       .kind-badge.compaction {
-        background: #f3e8ff;
-        color: #7e22ce;
+        background: var(--surface);
+        color: var(--purple);
       }
       .kind-badge.retry {
-        background: #fff7ed;
-        color: #c2410c;
+        background: var(--surface);
+        color: var(--anthropic);
       }
       .kind-badge.history_snapshot,
       .kind-badge.context_rebuild {
-        background: #ecfeff;
-        color: #0e7490;
+        background: var(--surface);
+        color: var(--blue);
       }
       .download-notice {
         display: none;
         margin: 12px 0;
         padding: 12px 14px;
-        border-radius: 10px;
-        background: #eff6ff;
-        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border);
       }
       .download-notice.open {
         display: block;
@@ -636,10 +695,10 @@
       }
       .system-context {
         margin: 10px 0;
-        border: 1px solid #d0d5dd;
-        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
         padding: 10px 12px;
-        background: #f8fafc;
+        background: var(--surface);
       }
       .system-context summary {
         cursor: pointer;
@@ -659,9 +718,9 @@
       }
       .export-controls select {
         padding: 8px;
-        border: 1px solid #ccd3dc;
+        border: 1px solid var(--border);
         border-radius: 6px;
-        background: #fff;
+        background: var(--bg);
       }
       .diagnostic-grid,
       .tool-grid {
@@ -672,10 +731,10 @@
       }
       .diagnostic-card,
       .tool-card {
-        border: 1px solid #d9e1ea;
-        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
         padding: 12px;
-        background: #fff;
+        background: var(--bg);
       }
       .diagnostic-card h3,
       .tool-card h3 {
@@ -689,8 +748,8 @@
       .diagnostic-card button,
       .tool-card button {
         margin-top: 8px;
-        color: #1769e0;
-        border-color: #9fc0ed;
+        color: var(--blue);
+        border-color: var(--border);
       }
       .diagnostic-toolbar {
         display: flex;
@@ -705,28 +764,16 @@
         min-height: 320px;
       }
       .status-success {
-        color: #08745b;
+        color: var(--success);
       }
       .status-error {
-        color: #b42318;
-      }
-      .login input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 8px;
+        color: var(--danger);
       }
       @media (max-width: 900px) {
         .app-layout {
           grid-template-columns: 1fr;
         }
-        .sidebar {
-          border-right: 0;
-          border-bottom: 1px solid #dde2e8;
-        }
-        .sidebar > details {
-          position: static;
-          max-height: none;
-        }
+
         .drawer {
           inset: 0;
         }
@@ -734,80 +781,289 @@
           padding: 14px;
         }
       }
-      .external-import { background: #e5f2ff; color: #155a8d; }
+      .external-import { background: var(--surface); color: var(--blue); }
       .external-sources { margin-bottom: 18px; }
       .external-sources summary { cursor: pointer; }
-      .external-source { border-top: 1px solid #dde2e8; padding: 16px 0; }
+      .external-source { border-top: 1px solid var(--border); padding: 16px 0; }
       .external-source summary, .external-source dd, .native-event-meta { overflow-wrap: anywhere; }
       .external-source dl { display: grid; grid-template-columns: minmax(90px, 130px) minmax(0, 1fr); gap: 8px; }
       .external-source dt, .external-source dd { margin: 0; }
       .native-event { margin: 12px 0; }
+
+      .top-nav {
+        display: flex; align-items: center; gap: 32px; padding: 0 32px;
+        border-bottom: 1px solid var(--border); min-height: 64px;
+      }
+      .nav-brand { font-weight: 650; margin-right: 16px; }
+      .top-nav a { text-decoration: none; color: var(--muted); padding: 20px 0; border-bottom: 2px solid transparent; }
+      .top-nav a[aria-current="page"] { color: var(--text); border-color: var(--text); }
+      .insights { max-width: 1600px; margin: auto; padding: 48px 40px 64px; }
+      .insights-head { display: flex; justify-content: space-between; gap: 24px; align-items: start; }
+      .insights h1 { font-size: clamp(28px, 3vw, 42px); font-weight: 650; letter-spacing: -.04em; margin-bottom: 8px; }
+      .insights h2 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -.02em; }
+      .insights-head p { margin: 0; }
+      .window-control { display: flex; align-items: center; gap: 12px; flex: none; padding-top: 8px; }
+      .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin: 48px 0 56px; }
+      .kpi-number { font-size: clamp(40px, 5.6vw, 80px); line-height: 1.1; letter-spacing: -.05em; font-weight: 600; }
+      .kpi-label { margin-top: 14px; font-size: 16px; font-weight: 650; }
+      .kpi-note { color: var(--muted); margin-top: 3px; }
+      .daily-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 20px 32px; }
+      .provider-legend { display: flex; flex-wrap: wrap; gap: 20px; color: var(--muted); }
+      .provider-legend b { color: var(--text); font-weight: 600; }
+      .provider-dot { width: 7px; height: 7px; background: currentColor; border-radius: 50%; display: inline-block; flex: none; }
+      .provider-anthropic { --provider: var(--anthropic); color: var(--anthropic); }
+      .provider-openai { --provider: var(--openai); color: var(--openai); }
+      .provider-google { --provider: var(--blue); color: var(--blue); }
+      .provider-other { --provider: var(--other); color: var(--muted); }
+      .legend-item { display: inline-flex; align-items: center; gap: 8px; }
+      .daily-chart { width: 100%; display: block; margin-top: 24px; overflow: visible; }
+      .daily-chart line { stroke: var(--border); stroke-width: 1; }
+      .daily-chart text { fill: var(--muted); font: 12px system-ui; }
+      .model-section { margin-top: 56px; }
+      .model-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 48px 36px; margin-top: 32px; }
+      .metric-chart { min-width: 0; }
+      .metric-chart h3 { font-size: 16px; font-weight: 600; margin: 0 0 20px; }
+      .model-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(24px, 1fr) 58px; gap: 10px; align-items: center; margin: 12px 0; text-decoration: none; font-size: 13px; }
+      .model-name { display: flex; gap: 7px; align-items: center; min-width: 0; }
+      .model-name-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .model-bar { height: 9px; border-radius: 0 9px 9px 0; background: var(--provider); display: block; }
+      .model-value { text-align: right; color: var(--muted); }
+      .insights-footnote { max-width: 1080px; color: var(--muted); line-height: 1.8; margin: 42px 0 0; }
+      .insights-status { padding: 48px 0; color: var(--muted); }
+      .card { background: transparent; border: 0; border-right: 1px solid var(--border); border-radius: 0; padding: 8px 18px 8px 0; }
+      .card:last-child { border-right: 0; }
+      .num { font-size: 32px; font-weight: 600; }
+      .cards { margin: 32px 0; }
+      .sessions-panel { border-left: 0; border-right: 0; border-radius: 0; }
+      .section-head { gap: 20px; flex-wrap: wrap; padding: 20px 0; }
+      .back-button { background: var(--surface); color: var(--text); border-color: var(--border); }
+      .back-button:hover { background: var(--hover); }
+
+      .facet-group { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 16px 0; }
+      .facet-grid { gap: 16px; }
+      .content { padding: 32px; }
+      .drawer-head { flex-wrap: wrap; top: 0; }
+      .process-step > summary .muted { margin-left: 8px; }
+      .request-head, .tool-summary { flex-wrap: wrap; }
+      .route-shell, .request-list-item > *, .tool-card, .diagnostic-card { min-width: 0; overflow-wrap: anywhere; }
+      .source-search { width: min(480px, 100%); }
+      #importedSources { padding: 16px; }
+      .pagination { flex-wrap: wrap; }
+      @media (max-width: 720px) {
+        .top-nav { padding: 0 20px; gap: 24px; }
+        .nav-brand { display: none; }
+        .insights { padding: 28px 20px 48px; }
+        .insights-head { flex-direction: column; gap: 16px; }
+        .window-control { padding-top: 0; }
+        .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 20px; margin: 32px 0 40px; }
+        .kpi-number { font-size: 46px; }
+        .kpi-label { font-size: 14px; }
+        .kpi-note { font-size: 12px; }
+        .provider-legend { gap: 10px 18px; font-size: 12px; }
+        .model-grid { grid-template-columns: 1fr; gap: 28px; }
+        .model-row { font-size: 13px; }
+        .content, .route-page { padding: 20px; }
+        .app-layout { min-height: auto; }
+        .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+        .card { min-width: 0; padding-right: 4px; }
+        .num { font-size: 22px; }
+        .technical-meta dl { grid-template-columns: 1fr; }
+        .technical-meta dd { margin-bottom: 8px; }
+        .diagnostic-grid, .tool-grid { grid-template-columns: minmax(0, 1fr); }
+        .conversation-title { max-width: 230px; }
+
+        .request-list-item { grid-template-columns: minmax(0, 1fr); }
+      }
+      button, .filter-toggle, .archive-actions > summary {
+        min-height: 36px; padding: 8px 12px; border: 1px solid var(--border);
+        border-radius: 6px; background: transparent; font-weight: 500; line-height: 1.3;
+      }
+      button.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+      button.primary:hover { background: #fff; }
+      button.ghost, button.back-button { border-color: transparent; color: var(--muted); background: transparent; padding-left: 0; }
+      input, select { min-height: 36px; max-width: 100%; }
+      .app-layout { grid-template-columns: minmax(0, 1fr); min-height: auto; }
+      .content { width: 100%; max-width: 1600px; margin: auto; padding: 48px 40px 64px; }
+      .page-header h1, .detail-title { font-size: clamp(28px, 3vw, 42px); line-height: 1.15; letter-spacing: -.04em; font-weight: 600; }
+      .session-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin: 44px 0 48px; }
+      .session-kpis .kpi-number { font-size: clamp(38px, 5.6vw, 80px); white-space: nowrap; }
+      .sessions-toolbar { display: flex; gap: 12px; align-items: center; }
+      #sessionSearch { flex: 1; min-width: 0; max-width: 620px; background: var(--surface); padding: 11px 14px; }
+      #filterSidebar > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+      #filterSidebar > summary::-webkit-details-marker { display: none; }
+      .filter-panel { position: fixed; z-index: 30; right: 0; top: 0; height: 100dvh; width: min(460px, 100%); padding: 28px; background: var(--bg); border-left: 1px solid var(--border); overflow-y: auto; box-shadow: -60px 0 120px #000c; }
+      .filter-panel h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+      #facetSearch { width: 100%; margin: 12px 0 24px; }
+      .facet-group summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; font-weight: 500; cursor: pointer; }
+      .facet-group summary::after { content: '+'; color: var(--muted); }
+      .facet-group[open] summary::after { content: '−'; }
+      .facet-group .facet-meta { font-size: 11px; font-weight: 400; }
+      .facet-grid label > span { display: flex; justify-content: space-between; gap: 8px; }
+      .filter-actions { margin: 24px 0; }
+      .active-filters:empty { display: none; }
+      .active-filters { margin: 16px 0; }
+      .chip { color: var(--text); max-width: 100%; overflow-wrap: anywhere; text-align: left; font-size: 12px; }
+      .sessions-panel { border: 0; }
+      .section-head { padding: 22px 0; gap: 12px; align-items: baseline; border: 0; font-size: 12px; }
+      .archive-actions { margin-left: auto; max-width: 100%; }
+      .archive-actions > summary { border: 0; color: var(--muted); cursor: pointer; padding-right: 0; }
+      .archive-actions .export-controls { padding: 16px 0 0; justify-content: flex-end; }
+      .session-row { display: flex; gap: 20px; align-items: center; border-top: 1px solid var(--border); padding: 22px 0; text-decoration: none; }
+      .session-copy { flex: 1; min-width: 0; }
+      .conversation-title { max-width: none; width: 100%; font-size: 16px; font-weight: 500; letter-spacing: -.015em; }
+      .conversation-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--muted); }
+      .session-project { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-model { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
+      .session-model > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-model .provider-dot { width: 6px; height: 6px; }
+      .session-model > span { color: var(--muted); }
+      .key-pill { flex: none; max-width: 180px; background: none; color: var(--muted); padding: 0; }
+      .row-arrow { color: var(--muted); font-size: 20px; }
+      .source-provenance { overflow-wrap: anywhere; }
+      .route-page { padding: 32px 40px 64px; min-height: calc(100vh - 64px); }
+      .route-shell { max-width: 980px; }
+      .drawer-head { position: static; padding: 0; margin-bottom: 28px; }
+      #turnTitle { font-size: clamp(22px, 2.2vw, 28px); letter-spacing: -.02em; -webkit-line-clamp: 2; }
+      .detail-title { margin: 0 0 20px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+      .meta-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 28px; }
+      .meta-chip { border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; font-size: 12px; color: var(--muted); max-width: 100%; overflow-wrap: anywhere; }
+      .detail-toolbar { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; margin: 0 0 8px; }
+      .turn-card { display: block; padding: 32px 0; margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: none; }
+      .turn-card:hover { box-shadow: none; border-color: var(--border); }
+      .turn-primary { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 0; border: 0; }
+      .user-message { background: var(--surface); padding: 20px 24px; border-radius: 8px; }
+      .turn-primary h3, .message-role { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+      .turn-final { border: 0; padding: 0 24px; }
+      .turn-text, .message-text { font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+      .turn-text { max-height: 10.5em; }
+      .turn-text-detail { max-height: none; }
+      .placeholder-text { font-style: normal; font-size: 13px; }
+      .turn-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 20px 24px 0; font-size: 12px; color: var(--muted); }
+      .turn-footer button { font-size: 12px; padding: 0; min-height: 28px; }
+      .turn-primary button { font-size: 12px; margin-top: 12px; color: var(--muted); }
+      #turnPrimary { margin: 36px 0 48px; }
+      #turnPrimary ~ h3 { font-size: 22px; letter-spacing: -.025em; margin-bottom: 8px; }
+      #turnPrimary ~ p { font-size: 13px; margin-bottom: 28px; }
+      .process-timeline { margin-left: 7px; padding-left: 24px; border-left: 1px solid var(--border); }
+      .process-step { position: relative; border: 0; border-radius: 0; margin: 0; padding: 0 0 24px; background: none; overflow: visible; }
+      .process-step::before { content: ''; position: absolute; width: 7px; height: 7px; border: 1px solid var(--muted); background: var(--bg); border-radius: 50%; left: -28px; top: 15px; }
+      .process-step[open]::before { background: var(--text); border-color: var(--text); }
+      .process-step > summary { background: none; padding: 8px 0; font-size: 13px; font-weight: 400; cursor: pointer; }
+      .process-step > summary b { font-weight: 500; }
+      .process-step > summary .muted { display: block; margin: 4px 0 0; font-size: 12px; }
+      .process-step-body { padding: 12px 0; gap: 12px; }
+      .process-step-body > button:not(.tool-summary) { justify-self: start; border-color: transparent; padding-left: 0; color: var(--muted); font-size: 12px; }
+      .tool-summary { display: inline-flex; justify-content: flex-start; justify-self: start; gap: 8px; font: 12px ui-monospace, monospace; padding: 8px 12px; border-radius: 5px; background: var(--surface); }
+      .request-card { border: 0; padding: 0; margin: 32px 0; background: none; }
+      .request-head { color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+      .request-head b { font-weight: 500; }
+      .conversation-stream { gap: 28px; margin: 32px 0; }
+      .message-bubble { padding: 0 24px; border: 0; border-radius: 0; background: none; min-width: 0; }
+      .message-bubble.user { background: var(--surface); padding: 20px 24px; border: 0; border-radius: 8px; }
+      .message-bubble.assistant, .message-bubble.tool, .message-bubble.compaction { background: none; border: 0; }
+      .message-bubble.tool .message-text { font: 12px/1.7 ui-monospace, monospace; background: var(--surface); padding: 16px; border-radius: 6px; }
+      .context-summary { background: none; padding: 12px 0; font-size: 12px; }
+      .tool-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; margin-top: 36px; }
+      .tool-card, .diagnostic-card { border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; padding: 20px 0 0; }
+      .tool-card .diagnostic-content { min-height: 0; }
+      .tool-card h3, .diagnostic-card h3 { font-size: 13px; color: var(--muted); font-weight: 500; }
+      pre { font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; border-radius: 6px; padding: 20px; }
+      .markdown { white-space: normal; }
+      .markdown p { margin: 0 0 1em; }
+      .markdown > :last-child { margin-bottom: 0; }
+      .markdown h2, .markdown h3, .markdown h4 { font-size: 16px; letter-spacing: -.015em; margin: 1.5em 0 .6em; font-weight: 600; }
+      .markdown ul, .markdown ol { padding-left: 1.5em; margin: .5em 0 1em; }
+      .markdown li { margin: .3em 0; }
+      .markdown a { text-decoration-color: var(--muted); text-underline-offset: 3px; }
+      .markdown code { font: .85em/1.6 ui-monospace, monospace; background: var(--surface); padding: 2px 5px; border-radius: 3px; }
+      .markdown pre { white-space: pre; word-break: normal; overflow-x: auto; max-width: 100%; max-height: none; margin: 16px 0; }
+      .markdown pre code { padding: 0; background: none; font-size: 12px; }
+      .external-sources { background: none; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 20px 0; }
+      @media (max-width: 720px) {
+        .content { padding: 28px 20px 48px; }
+        .route-page { padding: 24px 20px 48px; }
+        .session-kpis { gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 32px 0; }
+        .session-kpis .kpi-number { font-size: 42px; }
+        .session-kpis > :last-child { grid-column: 1 / -1; }
+        .session-kpis > :last-child .kpi-number { font-size: 32px; }
+        .session-row { gap: 10px; flex-wrap: wrap; padding: 20px 0; }
+        .session-copy { flex-basis: calc(100% - 24px); }
+        .session-row .key-pill { font-size: 11px; max-width: 100%; }
+        .row-arrow { margin-left: auto; }
+        .conversation-title { font-size: 15px; max-width: none; }
+        .session-project { max-width: 140px; }
+        .conversation-meta { gap: 5px 6px; font-size: 11px; }
+        .section-head { font-size: 11px; }
+        .archive-actions { margin-left: 0; }
+        .filter-panel { padding: 24px 20px; }
+        .detail-toolbar { justify-content: flex-start; }
+        .export-controls { gap: 8px; }
+        .export-controls select, .export-controls button { font-size: 12px; }
+        .user-message, .message-bubble.user { padding: 16px; }
+        .turn-final, .message-bubble { padding: 0 4px; }
+        .turn-footer { margin-left: 4px; margin-right: 4px; }
+        .turn-text, .message-text { font-size: 14px; }
+        .process-timeline { padding-left: 20px; }
+        .process-step::before { left: -24px; }
+        .pagination { gap: 8px; font-size: 12px; }
+        .pagination input { width: 56px; }
+      }
     </style>
   </head>
   <body>
-    <div id="listView" class="app-layout">
-      <aside class="sidebar">
-        <details id="filterSidebar" open>
-          <summary>
-            <span data-i18n="facetedFilter"></span
-            ><span id="activeCount" class="badge">0</span>
-          </summary>
-          <div class="filter-head">
-            <input
-              id="facetSearch"
-              data-i18n-placeholder="facetSearchPlaceholder"
-              oninput="filterFacetNames()"
-            />
-          </div>
-          <div id="activeFilters" class="active-filters"></div>
-          <div id="filters" class="facet-groups"></div>
-          <div class="filter-actions">
-            <label
-              ><span data-i18n="limit"></span
-              ><input id="limit" type="number" value="100" min="1" max="1000"
-            /></label>
-            <button data-i18n="apply" onclick="loadSessions()"></button>
-            <button data-i18n="reset" onclick="resetFilters()"></button>
-          </div>
-        </details>
-      </aside>
+    <nav class="top-nav" aria-label="Archive">
+      <span class="nav-brand" data-i18n="title"></span>
+      <a href="#/insights" data-i18n="insightsTab" id="insightsTab"></a>
+      <a href="#/sessions" data-i18n="sessionsTab" id="sessionsTab"></a>
+    </nav>
+    <main id="insightsView" class="insights" hidden>
+      <header class="insights-head">
+        <div><h1 data-i18n="insightsTitle"></h1><p id="insightsGenerated" class="muted"></p></div>
+        <label class="window-control"><span data-i18n="insightsWindow"></span>
+          <select id="insightsDays" onchange="loadInsights()">
+            <option value="7" data-i18n="days7"></option>
+            <option value="30" data-i18n="days30" selected></option>
+            <option value="90" data-i18n="days90"></option>
+          </select>
+        </label>
+      </header>
+      <div id="insightsContent" aria-live="polite"></div>
+    </main>
+    <div id="listView" class="app-layout" style="display:none">
       <main class="content">
-        <header>
-          <h1 data-i18n="title">会话归档</h1>
-          <p class="muted" data-i18n="subtitle"></p>
-        </header>
-        <div id="cards" class="cards"></div>
-        <section class="panel sessions-panel">
-          <div class="section-head">
-            <h2 data-i18n="sessionsTitle"></h2>
-            <div class="export-controls">
-              <span id="resultCount" class="muted"></span
-              ><button id="importedSourcesButton" data-i18n="importedSources" onclick="ExternalArchive.toggleSources(this)"></button
-              ><select id="allExportFormat">
-                <option value="archive" data-i18n="archiveFormat"></option>
-                <option value="sft" data-i18n="sftFormat"></option></select
-              ><button
-                data-i18n="exportAll"
-                onclick="downloadExport('all')"
-              ></button>
+        <header class="page-header"><h1 data-i18n="sessionsTab"></h1></header>
+        <div id="cards" class="session-kpis"></div>
+        <div class="sessions-toolbar">
+          <input id="sessionSearch" type="search" data-i18n-placeholder="searchLoaded" oninput="searchSessions(this.value)" />
+          <details id="filterSidebar" ontoggle="if (!this.open) writeFacetControls()">
+            <summary class="filter-toggle"><span data-i18n="filtersLabel"></span><span id="activeCount" class="badge">0</span></summary>
+            <div class="filter-panel">
+              <div class="filter-head"><h2 data-i18n="facetedFilter"></h2><button class="ghost" data-i18n="close" onclick="closeFilters()"></button></div>
+              <input id="facetSearch" data-i18n-placeholder="facetSearchPlaceholder" oninput="filterFacetNames()" />
+              <div id="filters" class="facet-groups"></div>
+              <div class="filter-actions">
+                <label><span data-i18n="limit"></span><input id="limit" type="number" value="100" min="1" max="1000" /></label>
+                <button class="primary" data-i18n="apply" onclick="applyFilters();closeFilters()"></button>
+                <button data-i18n="reset" onclick="resetFilters()"></button>
+              </div>
             </div>
+          </details>
+        </div>
+        <div id="activeFilters" class="active-filters"></div>
+        <section class="sessions-panel">
+          <div class="section-head">
+            <span id="resultCount" class="muted" aria-live="polite"></span>
+            <details class="archive-actions"><summary data-i18n="sourcesAndExports"></summary>
+              <div class="export-controls">
+                <button id="importedSourcesButton" data-i18n="importedSources" onclick="ExternalArchive.toggleSources(this)"></button>
+                <select id="allExportFormat"><option value="archive" data-i18n="archiveFormat"></option><option value="sft" data-i18n="sftFormat"></option></select>
+                <button data-i18n="exportAll" onclick="downloadExport('all')"></button>
+              </div>
+            </details>
           </div>
           <div id="importedSources" hidden></div>
           <div id="allDownloadNotice" class="download-notice"></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th data-i18n="columnConversation"></th>
-                  <th data-i18n="columnKey"></th>
-                  <th data-i18n="columnModel"></th>
-                  <th data-i18n="columnRequests"></th>
-                  <th data-i18n="columnLastActivity"></th>
-                </tr>
-              </thead>
-              <tbody id="rows"></tbody>
-            </table>
-          </div>
+          <div id="rows" class="session-list"></div>
         </section>
       </main>
     </div>
@@ -819,7 +1075,11 @@
             data-i18n="backToSessions"
             onclick="goSessions()"
           ></button>
-          <div class="export-controls">
+
+        </div>
+        <h1 id="detailTitle" class="detail-title"></h1>
+        <p id="detailMeta" class="meta-chips"></p>
+        <div class="detail-toolbar"><div class="export-controls">
             <select id="sessionOrder" onchange="loadSessionPage(1)">
               <option value="desc" data-i18n="newestFirst"></option>
               <option value="asc" data-i18n="oldestFirst"></option></select
@@ -827,10 +1087,7 @@
               <option value="archive" data-i18n="archiveFormat"></option>
               <option value="sft" data-i18n="sftFormat"></option></select
             ><button id="download" data-i18n="exportSession"></button>
-          </div>
-        </div>
-        <h2 id="detailTitle"></h2>
-        <p id="detailMeta" class="muted"></p>
+          </div></div>
         <div id="externalSources"></div>
         <div id="downloadNotice" class="download-notice"></div>
         <div id="detail"></div>
@@ -876,12 +1133,12 @@
             onclick="goSession()"
           ></button>
         </div>
-        <h2 id="turnTitle"></h2>
-        <p id="turnMeta" class="muted"></p>
-        <div id="turnPrimary" class="panel turn-primary"></div>
+        <h1 id="turnTitle" class="detail-title"></h1>
+        <p id="turnMeta" class="meta-chips"></p>
+        <div id="turnPrimary" class="turn-primary"></div>
         <h3 data-i18n="turnProcess"></h3>
         <p class="muted" data-i18n="turnProcessHint"></p>
-        <div id="turnProcess"></div>
+        <div id="turnProcess" class="process-timeline"></div>
         <nav id="turnPagination" class="pagination">
           <button
             data-i18n="previousPage"
@@ -901,8 +1158,8 @@
             onclick="goParentFromRequest()"
           ></button>
         </div>
-        <h2 id="requestTitle"></h2>
-        <p id="requestMeta" class="muted"></p>
+        <h1 id="requestTitle" class="detail-title"></h1>
+        <p id="requestMeta" class="meta-chips"></p>
         <div id="requestDetail"></div>
       </div>
     </div>
@@ -915,7 +1172,7 @@
             onclick="goRequest()"
           ></button>
         </div>
-        <h2 id="subDetailTitle"></h2>
+        <h1 id="subDetailTitle" class="detail-title"></h1>
         <p id="subDetailMeta" class="muted"></p>
         <div id="subDetail"></div>
       </div>
@@ -929,24 +1186,51 @@
       </div>
     </div>
     <div id="login" class="login">
-      <div class="panel">
-        <h2 data-i18n="connectTitle"></h2>
-        <label
-          ><span data-i18n="apiBase"></span><input id="base" value="" /></label
-        ><br />
-        <label
-          ><span data-i18n="managementKey"></span
-          ><input id="key" type="password" /></label
-        ><br />
-        <button data-i18n="login" onclick="manualLogin()"></button>
-        <p id="loginError" class="error"></p>
-        <p class="muted" data-i18n="loginHint"></p>
-      </div>
+      <form class="login-card" onsubmit="event.preventDefault(); manualLogin()">
+        <p class="login-brand" data-i18n="title"></p>
+        <h1 data-i18n="connectTitle"></h1>
+        <p class="login-hint" data-i18n="loginHint"></p>
+        <label class="login-field"><span data-i18n="apiBase"></span><input id="base" value="" autocomplete="url" spellcheck="false" /></label>
+        <label class="login-field"><span data-i18n="managementKey"></span><input id="key" type="password" autocomplete="current-password" /></label>
+        <button class="login-submit" type="submit" data-i18n="login"></button>
+        <p id="loginError" class="error" role="alert"></p>
+      </form>
     </div>
     <script src="external.js"></script>
     <script>
       var messages = {
         zh: {
+          filtersLabel: "筛选",
+          searchLoaded: "搜索已加载的会话…",
+          sourcesAndExports: "原始文件与导出",
+          removeFilter: "移除筛选 {name}",
+          requestsCount: "{count} 次请求",
+          turnNumber: "回合 {number}",
+          stepsCount: "{count} 步",
+          stepOne: "1 步",
+          requestOne: "1 次请求",
+          justNow: "刚刚",
+          minutesAgo: "{count} 分钟前",
+          hoursAgo: "{count} 小时前",
+          daysAgo: "{count} 天前",
+          noSearchResults: "已加载的会话中没有匹配项。",
+          loadedCount: "已显示 {shown} / {loaded} 个已加载会话",
+
+          insightsTab: "洞察", sessionsTab: "会话",
+          insightsTitle: "模型舰队表现一览", insightsWindow: "时间范围",
+          days7: "7 天", days30: "30 天", days90: "90 天",
+          generated: "生成于 {time}", insightsLoading: "正在汇总请求数据…",
+          insightsError: "无法加载洞察数据。", retryInsights: "重试",
+          insightRequests: "请求", insightRequestsNote: "时间范围内的模型调用",
+          insightSessions: "会话", insightSessionsNote: "不同的会话标识",
+          insightTurns: "回合", insightTurnsNote: "不同的非空回合标识",
+          insightModels: "模型", insightModelsNote: "所有有请求的模型",
+          dailyRequests: "每日请求", modelBehavior: "各模型表现",
+          metricRequests: "请求数", metricSessions: "会话数", metricSteps: "每回合步骤数",
+          metricLatency: "平均延迟（秒）", metricFailure: "失败率（%）", metricCancel: "取消率（%）",
+          providerAnthropic: "Anthropic", providerOpenai: "OpenAI", providerGoogle: "Google", providerOther: "其他",
+          insightsEmpty: "此时间范围内没有请求。", modelsEmpty: "此时间范围内没有模型达到 20 次请求。",
+          insightsFootnote: "请求数为模型调用次数，会话数为不同会话标识数。每回合步骤数为请求数除以不同的非空回合标识数，仅包含客户端发送回合标识的模型。平均延迟仅统计成功请求从开始到完成的时间。失败率包含失败和拒绝请求，取消率统计已取消请求，分母均为全部请求。日期按 UTC 统计，含今天。图表仅展示至少 20 次请求的模型，汇总包含全部模型。外部导入历史不计入统计。",
           title: "会话归档",
           subtitle:
             "按项目、代码库、客户端工具、会话、模型、工具调用、认证与结果等元信息组合筛选。",
@@ -990,12 +1274,12 @@
           importedSources: "导入的原始文件",
           untitled: "未命名会话",
           storageUsed: "实际存储占用",
-          connectTitle: "连接 CPA 管理 API",
-          apiBase: "API Base",
-          managementKey: "Management Key",
+          connectTitle: "连接 CPA",
+          apiBase: "API 地址",
+          managementKey: "管理密钥",
           login: "登录",
           loginHint:
-            "若宿主面板勾选了“记住凭证”，本页会自动复用。Manager Server 模式也可在此输入 cpamp_ 管理员 Key；凭证只保存在本页内存中。",
+            "在 CPAMP 中打开时会自动登录。单独打开时，请输入 API 地址和管理员密钥，密钥只保存在本页内存中。",
           loginFailed:
             "连接失败（HTTP {status}）。请确认 API Base 与当前面板一致，并使用当前面板的管理员 Key。",
           records: "记录",
@@ -1050,8 +1334,8 @@
           finalAnswer: "最终回复",
           backToTurn: "返回本轮对话",
           noFinalAnswer:
-            "尚未记录到最终自然语言回复，可能仍在执行或以工具调用结束。",
-          openTurn: "查看中间过程",
+            "未记录最终回复。",
+          openTurn: "查看过程",
           turnProcess: "中间过程",
           turnProcessHint:
             "逐项展开可查看模型的中间说明、压缩节点和工具调用摘要；工具完整参数与结果位于更深一层。",
@@ -1084,6 +1368,37 @@
             "此项内容过长，完整内容请在原始载荷或工具详情中查看。",
         },
         en: {
+          filtersLabel: "Filters",
+          searchLoaded: "Search loaded sessions…",
+          sourcesAndExports: "Sources & exports",
+          removeFilter: "Remove filter {name}",
+          requestsCount: "{count} requests",
+          turnNumber: "Turn {number}",
+          stepsCount: "{count} steps",
+          stepOne: "1 step",
+          requestOne: "1 request",
+          justNow: "Just now",
+          minutesAgo: "{count}m ago",
+          hoursAgo: "{count}h ago",
+          daysAgo: "{count}d ago",
+          noSearchResults: "No matches in the loaded sessions.",
+          loadedCount: "Showing {shown} of {loaded} loaded sessions",
+
+          insightsTab: "Insights", sessionsTab: "Sessions",
+          insightsTitle: "How the fleet behaves", insightsWindow: "Window",
+          days7: "7 days", days30: "30 days", days90: "90 days",
+          generated: "Generated {time}", insightsLoading: "Summarizing requests…",
+          insightsError: "Could not load insights.", retryInsights: "Retry",
+          insightRequests: "requests", insightRequestsNote: "model calls in this window",
+          insightSessions: "sessions", insightSessionsNote: "distinct session identifiers",
+          insightTurns: "turns", insightTurnsNote: "distinct non-empty turn identifiers",
+          insightModels: "models", insightModelsNote: "across all recorded requests",
+          dailyRequests: "Daily requests", modelBehavior: "How each model behaves",
+          metricRequests: "Requests", metricSessions: "Sessions", metricSteps: "Steps per turn",
+          metricLatency: "Avg latency (s)", metricFailure: "Failure rate (%)", metricCancel: "Cancel rate (%)",
+          providerAnthropic: "Anthropic", providerOpenai: "OpenAI", providerGoogle: "Google", providerOther: "Other",
+          insightsEmpty: "No requests in this window.", modelsEmpty: "No models with at least 20 requests in this window.",
+          insightsFootnote: "Requests count model calls. Sessions count distinct session identifiers. Steps per turn is requests divided by distinct non-empty turn identifiers, and only covers models whose clients send turn identifiers. Average latency measures start to completion for successful requests only. Failure rate includes failed and rejected requests. Cancel rate counts canceled requests. Both rates divide by all requests. Days use UTC and include today. Charts show models with at least 20 requests; totals include every model. Imported histories are excluded.",
           title: "Session Archive",
           subtitle:
             "Combine project, repository, client, session, model, tool, authentication and outcome metadata to find archived coding sessions.",
@@ -1130,12 +1445,12 @@
           importedSources: "Imported sources",
           untitled: "Untitled session",
           storageUsed: "Storage used",
-          connectTitle: "Connect to the CPA management API",
-          apiBase: "API Base",
-          managementKey: "Management Key",
+          connectTitle: "Connect to CPA",
+          apiBase: "API base URL",
+          managementKey: "Management key",
           login: "Sign in",
           loginHint:
-            "When the host panel remembers credentials, this page reuses them automatically. In Manager Server mode, you can enter the cpamp_ admin key here; it stays in this page's memory only.",
+            "Inside CPAMP you're signed in automatically. Opened on its own, it needs the API URL and an admin key, which stays in this page's memory only.",
           loginFailed:
             "Connection failed (HTTP {status}). Ensure API Base matches the current panel and use its current administrator key.",
           records: "Records",
@@ -1190,8 +1505,8 @@
           finalAnswer: "Final response",
           backToTurn: "Back to this turn",
           noFinalAnswer:
-            "No final natural-language response has been recorded yet; the turn may still be running or may have ended with a tool call.",
-          openTurn: "View intermediate process",
+            "No final response recorded.",
+          openTurn: "Show process",
           turnProcess: "Intermediate process",
           turnProcessHint:
             "Expand a step to inspect intermediate explanations, compaction markers and tool summaries. Complete tool inputs and outputs remain one level deeper.",
@@ -1254,7 +1569,129 @@
             node.placeholder = t(node.dataset.i18nPlaceholder);
           });
         if (facets.length) renderFilters();
+        if (insightsData) renderInsights(insightsData);
       }
+
+      var insightsData = null, insightsRequest = 0;
+      var insightProviders = [
+        { id: "anthropic", label: "providerAnthropic" },
+        { id: "openai", label: "providerOpenai" },
+        { id: "google", label: "providerGoogle" },
+        { id: "other", label: "providerOther" },
+      ];
+      var insightMetrics = [
+        { key: "requests", label: "metricRequests", digits: 0 },
+        { key: "sessions", label: "metricSessions", digits: 0 },
+        { key: "steps_per_turn", label: "metricSteps", digits: 1, needsTurns: true },
+        { key: "avg_latency_seconds", label: "metricLatency", digits: 1 },
+        { key: "failure_rate", label: "metricFailure", digits: 1, percent: true },
+        { key: "cancel_rate", label: "metricCancel", digits: 1, percent: true },
+      ];
+      function insightNumber(value, digits) {
+        return Number(value).toLocaleString(locale === "zh" ? "zh-CN" : "en-US", {
+          minimumFractionDigits: digits, maximumFractionDigits: digits,
+        });
+      }
+      async function loadInsights() {
+        var request = ++insightsRequest;
+        var days = document.getElementById("insightsDays").value;
+        var content = document.getElementById("insightsContent");
+        insightsData = null;
+        document.getElementById("insightsGenerated").textContent = "";
+        content.innerHTML = '<p class="insights-status">' + esc(t("insightsLoading")) + '</p>';
+        try {
+          var data;
+          for (var attempt = 0; attempt < 150; attempt++) {
+            data = await api("/insights?days=" + days + "&min_requests=20");
+            if (request !== insightsRequest) return;
+            if (data.status !== "building") break;
+            await new Promise(function (resolve) { setTimeout(resolve, 2000); });
+            if (request !== insightsRequest) return;
+          }
+          if (data.status === "building") throw Error("insights build timeout");
+          insightsData = data;
+          renderInsights(data);
+        } catch (error) {
+          if (request !== insightsRequest) return;
+          content.innerHTML = '<p class="error">' + esc(t("insightsError")) +
+            '</p><button onclick="loadInsights()">' + esc(t("retryInsights")) + '</button>';
+        }
+      }
+      function renderInsights(data) {
+        document.getElementById("insightsGenerated").textContent = t("generated", { time: localTime(data.generated_at) });
+        var totals = data.totals;
+        var html = '<div class="kpis">' + [
+          ["requests", "insightRequests", "insightRequestsNote"],
+          ["sessions", "insightSessions", "insightSessionsNote"],
+          ["turns", "insightTurns", "insightTurnsNote"],
+          ["models", "insightModels", "insightModelsNote"],
+        ].map(function (item) {
+          return '<div><div class="kpi-number">' + insightNumber(totals[item[0]], 0) +
+            '</div><div class="kpi-label">' + esc(t(item[1])) + '</div><div class="kpi-note">' + esc(t(item[2])) + '</div></div>';
+        }).join("") + '</div>';
+        html += '<section aria-labelledby="dailyTitle"><div class="daily-head"><h2 id="dailyTitle">' + esc(t("dailyRequests")) + '</h2><div class="provider-legend">';
+        html += insightProviders.map(function (provider) {
+          var total = data.daily.reduce(function (sum, day) { return sum + (day.requests[provider.id] || 0); }, 0);
+          return '<span class="legend-item"><span class="provider-dot provider-' + provider.id + '"></span><b>' + insightNumber(total, 0) + '</b> ' + esc(t(provider.label)) + '</span>';
+        }).join("") + '</div></div>';
+        html += renderDailyChart(data.daily) + (totals.requests ? '' : '<p class="muted">' + esc(t("insightsEmpty")) + '</p>') + '</section>';
+        html += '<section class="model-section" aria-labelledby="modelsTitle"><h2 id="modelsTitle">' + esc(t("modelBehavior")) + '</h2>';
+        html += data.models.length ? '<div class="model-grid">' + insightMetrics.map(function (metric) {
+          var models = data.models.filter(function (model) {
+            return !metric.needsTurns || model.turns > 0;
+          }).sort(function (a, b) {
+            return b[metric.key] - a[metric.key] || a.model.localeCompare(b.model);
+          });
+          var max = models.length ? models[0][metric.key] : 0;
+          return '<section class="metric-chart" data-metric="' + metric.key + '"><h3>' + esc(t(metric.label)) + '</h3>' + models.map(function (model) {
+            var provider = insightProviders.find(function (p) { return p.id === model.provider; }) || insightProviders[3];
+            var value = model[metric.key];
+            var facet = document.querySelector('[data-facet="model.resolved"]');
+            var linked = facet && Array.from(facet.options).some(function (option) { return option.value === model.model; });
+            var tag = linked ? 'a' : 'div';
+            return '<' + tag + ' class="model-row provider-' + provider.id + '" data-model="' + esc(model.model) + '"' +
+              (linked ? ' href="#/sessions" onclick="filterInsightModel(' + data.models.indexOf(model) + ')"' : '') + '>' +
+              '<span class="model-name"><span class="provider-dot"></span><span class="model-name-label" title="' + esc(model.model) + '">' + esc(model.model) + '</span></span>' +
+              '<span><span class="model-bar" style="width:' + (max ? value / max * 100 : 0).toFixed(2) + '%"></span></span>' +
+              '<span class="model-value">' + insightNumber(value * (metric.percent ? 100 : 1), metric.digits) + (metric.percent ? '%' : '') + '</span></' + tag + '>';
+          }).join("") + '</section>';
+        }).join("") + '</div>' : '<p class="insights-status">' + esc(t("modelsEmpty")) + '</p>';
+        html += '</section><p class="insights-footnote">' + esc(t("insightsFootnote")) + '</p>';
+        document.getElementById("insightsContent").innerHTML = html;
+      }
+      function renderDailyChart(daily) {
+        var width = Math.max(320, document.getElementById("insightsContent").clientWidth);
+        var left = 42, top = 12, height = 190, plotWidth = width - left - 6;
+        var max = Math.max(1, ...daily.map(function (day) {
+          return insightProviders.reduce(function (sum, provider) { return sum + (day.requests[provider.id] || 0); }, 0);
+        }));
+        var svg = '<svg class="daily-chart" role="img" aria-label="' + esc(t("dailyRequests")) + '" viewBox="0 0 ' + width + ' 240">';
+        for (var i = 0; i <= 4; i++) {
+          var y = top + height * i / 4;
+          svg += '<line x1="' + left + '" x2="' + width + '" y1="' + y + '" y2="' + y + '"/><text x="' + (left - 9) + '" y="' + (y + 4) + '" text-anchor="end">' + insightNumber(max * (4 - i) / 4, 0) + '</text>';
+        }
+        daily.forEach(function (day, index) {
+          var slot = plotWidth / daily.length, x = left + slot * index + 1, bottom = top + height;
+          insightProviders.forEach(function (provider) {
+            var count = day.requests[provider.id] || 0, barHeight = count / max * height;
+            bottom -= barHeight;
+            svg += '<rect class="provider-' + provider.id + '" fill="currentColor" x="' + x + '" y="' + bottom + '" width="' + Math.max(1, slot - 3) + '" height="' + barHeight + '"><title>' + esc(day.day + ' · ' + t(provider.label) + ' · ' + insightNumber(count, 0)) + '</title></rect>';
+          });
+          var interval = Math.max(1, Math.ceil((daily.length - 1) / 4));
+          if (index % interval === 0 || index === daily.length - 1 && daily.length % interval > 2) {
+            svg += '<text x="' + (x + slot / 2) + '" y="226" text-anchor="middle">' + esc(day.day.slice(5)) + '</text>';
+          }
+        });
+        return svg + '</svg>';
+      }
+      function filterInsightModel(index) {
+        appliedFacets = {"model.resolved": insightsData.models[index].model};
+        writeFacetControls();
+        updateActiveFilters();
+      }
+      window.addEventListener("resize", function () {
+        if (insightsData && !document.getElementById("insightsView").hidden) renderInsights(insightsData);
+      });
 
       var session = null,
         facets = [],
@@ -1263,6 +1700,7 @@
         sessionsByID = {},
         detailSessionID = "",
         detailPage = 1,
+        sessionPageRequest = 0,
         detailPageSize = 20,
         detailTotal = 0,
         detailRecords = [],
@@ -1272,6 +1710,7 @@
         turnProcessTotal = 0,
         currentRequestID = "",
         currentRequestRecord = null;
+      var sessionList = { loaded: [], query: "" };
       var loadedProcessViews = {};
       var detailSeenContent = new Set();
       var fullTexts = {},
@@ -1540,7 +1979,7 @@
       function keyName(value) {
         return (
           keyAliases[normalizeKeyHash(value)] ||
-          (value ? value.slice(0, 12) + "…" : "—")
+          (value ? normalizeKeyHash(value).slice(0, 6) + "…" : "")
         );
       }
       function localTime(value) {
@@ -1608,22 +2047,18 @@
           facets = startup[1];
           document.getElementById("login").style.display = "none";
           document.getElementById("cards").innerHTML = [
-            [t("storageUsed"), fmt(st.compressed_bytes)],
-            ["Session", st.sessions],
-            [t("records"), st.records],
+            ["sessionsTab", insightNumber(st.sessions, 0)],
+            ["columnRequests", insightNumber(st.records, 0)],
+            ["storageUsed", fmt(st.compressed_bytes)],
           ]
             .map(function (item) {
               return (
-                '<div class="card"><div class="muted">' +
-                item[0] +
-                '</div><div class="num">' +
-                item[1] +
-                "</div></div>"
+                '<div><div class="kpi-number">' + item[1] + '</div><div class="kpi-label" data-i18n="' + item[0] + '">' + t(item[0]) + '</div></div>'
               );
             })
             .join("");
           renderFilters();
-          await loadSessions();
+          window.scrollTo(0, 0);
           await route();
         } catch (e) {
           document.getElementById("login").style.display = "grid";
@@ -1684,7 +2119,7 @@
           .filter(function (k) {
             return groups[k];
           })
-          .map(function (k, gi) {
+          .map(function (k) {
             var g = groups[k],
               fields = g.names
                 .map(function (n) {
@@ -1709,8 +2144,6 @@
                     '"><span>' +
                     esc(title) +
                     ' <span class="facet-meta">' +
-                    esc(n) +
-                    " · " +
                     t("valueCount", { count: values[n].length }) +
                     '</span></span><select data-facet="' +
                     esc(n) +
@@ -1723,9 +2156,7 @@
                 })
                 .join("");
             return (
-              '<details class="facet-group" ' +
-              (gi < 4 ? "open" : "") +
-              "><summary>" +
+              '<details class="facet-group"><summary>' +
               esc(g.title) +
               ' <span class="facet-meta">' +
               t("dimensionCount", { count: g.names.length }) +
@@ -1735,6 +2166,7 @@
             );
           })
           .join("");
+        writeFacetControls();
         updateActiveFilters();
       }
       function filterFacetNames() {
@@ -1756,29 +2188,44 @@
           if (q && visible) x.open = true;
         });
       }
+      var appliedFacets = {}, appliedLimit = 100;
+      function facetControls() {
+        return Array.from(document.querySelectorAll("[data-facet]"));
+      }
+      function writeFacetControls() {
+        facetControls().forEach(function (node) {
+          node.value = appliedFacets[node.dataset.facet] || "";
+        });
+        document.getElementById("limit").value = appliedLimit;
+      }
+      function applyFilters() {
+        appliedFacets = {};
+        facetControls().forEach(function (node) {
+          if (node.value) appliedFacets[node.dataset.facet] = node.value;
+        });
+        var limit = document.getElementById("limit").valueAsNumber;
+        appliedLimit = Number.isInteger(limit) ? Math.min(1000, Math.max(1, limit)) : 100;
+        return loadSessions();
+      }
       function updateActiveFilters() {
-        var active = [];
-        document.querySelectorAll("[data-facet]").forEach(function (x) {
-          if (x.value)
-            active.push(
-              '<span class="chip">' +
-                esc(facetLabel(x.dataset.facet)) +
-                ": " +
-                esc(facetValueLabel(x.dataset.facet, x.value)) +
-                "</span>",
-            );
+        var active = Object.keys(appliedFacets).map(function (name) {
+          return '<button class="chip" data-remove-facet="' + esc(name) + '" aria-label="' + esc(t('removeFilter', {name: facetLabel(name)})) + '" onclick="removeFacet(this.dataset.removeFacet)">' +
+            esc(facetLabel(name)) +
+            ": " +
+            esc(facetValueLabel(name, appliedFacets[name])) +
+            " ×</button>";
         });
         document.getElementById("activeFilters").innerHTML = active.length
           ? active.join("")
-          : '<span class="muted">' + t("noFilters") + "</span>";
+          : "";
         document.getElementById("activeCount").textContent = active.length;
       }
       async function loadSessions() {
         var q = new URLSearchParams();
-        document.querySelectorAll("[data-facet]").forEach(function (node) {
-          if (node.value) q.set(node.dataset.facet, node.value);
+        Object.keys(appliedFacets).forEach(function (name) {
+          q.set(name, appliedFacets[name]);
         });
-        q.set("limit", document.getElementById("limit").value || 100);
+        q.set("limit", appliedLimit);
         var rows = await api(
           "/sessions?" + q,
           t("loadingSessions"),
@@ -1787,66 +2234,68 @@
         rows.forEach(function (row) {
           sessionsByID[row.session_id] = row;
         });
-        document.getElementById("resultCount").textContent = t("resultCount", {
-          count: rows.length,
-        });
-        document.getElementById("rows").innerHTML = rows.length
-          ? rows
-              .map(function (row) {
-                var title = row.summary || row.project || t("untitled");
-                var meta = [row.project, row.session_id]
-                  .filter(Boolean)
-                  .join(" · ");
-                var sessionBadges = [];
-                sessionBadges.push(ExternalArchive.badge(row));
-                if (ExternalArchive.provenance(row))
-                  meta = ExternalArchive.provenance(row) + " · " + meta;
-                if ((row.thread_sources || []).indexOf("system") >= 0)
-                  sessionBadges.push(
-                    '<span class="kind-badge">' +
-                      esc(t("systemTask")) +
-                      "</span>",
-                  );
-                if (
-                  (row.kinds || []).length === 1 &&
-                  row.kinds[0] === "prewarm"
-                )
-                  sessionBadges.push(
-                    '<span class="kind-badge">' +
-                      esc(t("kindPrewarm")) +
-                      "</span>",
-                  );
-                return (
-                  "<tr onclick=\"openSession('" +
-                  esc(row.session_id) +
-                  '\')"><td><div class="conversation-title" title="' +
-                  esc(title) +
-                  '">' +
-                  esc(title) +
-                  '</div><div class="conversation-meta">' +
-                  sessionBadges.join("") +
-                  esc(meta) +
-                  '</div></td><td><span class="key-pill" title="' +
-                  esc(row.key_id || "") +
-                  '">' +
-                  esc(keyName(row.key_id)) +
-                  "</span></td><td>" +
-                  esc(row.model || "—") +
-                  "</td><td>" +
-                  row.requests +
-                  "</td><td>" +
-                  esc(localTime(row.last_at)) +
-                  "</td></tr>"
-                );
-              })
-              .join("")
-          : '<tr><td colspan="5" class="empty">' + t("empty") + "</td></tr>";
+        sessionList.loaded = rows;
+        renderSessionRows();
         updateActiveFilters();
       }
-      function resetFilters() {
-        document.querySelectorAll("[data-facet]").forEach(function (x) {
-          x.value = "";
+      function closeFilters() {
+        var panel = document.getElementById("filterSidebar");
+        if (!panel.open) return;
+        writeFacetControls();
+        panel.open = false;
+        panel.querySelector("summary").focus();
+      }
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") closeFilters();
+      });
+      function removeFacet(name) {
+        delete appliedFacets[name];
+        writeFacetControls();
+        updateActiveFilters();
+        loadSessions();
+      }
+      function searchSessions(value) {
+        sessionList.query = value.trim().toLocaleLowerCase();
+        renderSessionRows();
+      }
+      function relativeTime(value) {
+        var minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
+        if (!Number.isFinite(minutes) || minutes < 0) return localTime(value);
+        if (minutes < 1) return t("justNow");
+        if (minutes < 60) return t("minutesAgo", {count: minutes});
+        if (minutes < 1440) return t("hoursAgo", {count: Math.floor(minutes / 60)});
+        return t("daysAgo", {count: insightNumber(Math.floor(minutes / 1440), 0)});
+      }
+      function modelLabel(model) {
+        var provider = /^claude/i.test(model) ? "anthropic" : /^(gpt|o[1-9]|codex)/i.test(model) ? "openai" : /^gemini/i.test(model) ? "google" : "other";
+        return '<span class="session-model provider-' + provider + '"><i class="provider-dot"></i><span>' + esc(model || "—") + '</span></span>';
+      }
+      function renderSessionRows() {
+        var rows = sessionList.loaded.filter(function (row) {
+          return [titleText(row.summary || row.project), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
         });
+        document.getElementById("resultCount").textContent = t("loadedCount", {
+          shown: insightNumber(rows.length, 0), loaded: insightNumber(sessionList.loaded.length, 0),
+        });
+        document.getElementById("rows").innerHTML = rows.length ? rows.map(function (row) {
+          var title = titleText(row.summary || row.project);
+          var badges = ExternalArchive.badge(row);
+          if ((row.thread_sources || []).includes("system")) badges += '<span class="kind-badge">' + esc(t("systemTask")) + '</span>';
+          if ((row.kinds || []).length === 1 && row.kinds[0] === "prewarm") badges += '<span class="kind-badge">' + esc(t("kindPrewarm")) + '</span>';
+          return '<a class="session-row" href="#/sessions/' + encodeURIComponent(row.session_id) + '"><div class="session-copy"><div class="conversation-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="conversation-meta">' +
+            [
+              row.project ? '<span class="session-project" title="' + esc(row.project) + '">' + esc(row.project) + '</span>' : "",
+              row.model ? modelLabel(row.model) : "",
+              '<span>' + esc(t(row.requests === 1 ? "requestOne" : "requestsCount", {count: insightNumber(row.requests, 0)})) + '</span>',
+              '<time title="' + esc(localTime(row.last_at)) + '">' + esc(relativeTime(row.last_at)) + '</time>',
+            ].filter(Boolean).join('<span>·</span>') +
+            (ExternalArchive.provenance(row) ? '<span class="source-provenance">' + esc(ExternalArchive.provenance(row)) + '</span>' : "") + badges +
+            '</div></div>' + (keyAliases[normalizeKeyHash(row.key_id)] ? '<span class="key-pill" title="' + esc(keyName(row.key_id)) + '">' + esc(keyName(row.key_id)) + '</span>' : '') + '<span class="row-arrow" aria-hidden="true">›</span></a>';
+        }).join("") : '<div class="empty">' + esc(t(sessionList.query ? "noSearchResults" : "empty")) + '</div>';
+      }
+      function resetFilters() {
+        appliedFacets = {};
+        writeFacetControls();
         document.getElementById("facetSearch").value = "";
         filterFacetNames();
         loadSessions();
@@ -1864,8 +2313,8 @@
         detailSeenContent = new Set();
         document.getElementById("detail").innerHTML = "";
         document.getElementById("externalSources").innerHTML = "";
-        document.getElementById("detailTitle").textContent = displayText(
-          selected.summary || selected.project || t("untitled"),
+        document.getElementById("detailTitle").textContent = titleText(
+          selected.summary || selected.project,
         );
         document.getElementById("detailMeta").textContent = [
           keyName(selected.key_id),
@@ -1886,6 +2335,7 @@
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
+        var request = ++sessionPageRequest;
         var baseOffset = (detailPage - 1) * detailPageSize;
         var order = document.getElementById("sessionOrder").value || "desc";
         var page = await api(
@@ -1900,25 +2350,25 @@
           t("loadingTurns"),
           sqlTemplates.session,
         );
+        var current = routePath();
+        if (request !== sessionPageRequest || current.length !== 2 || current[0] !== "sessions" || current[1] !== detailSessionID) return;
+        fullTexts = {};
         detailTotal = page.total;
         detailRecords = page.turns || [];
         if (detailRecords[0]) {
           var first = detailRecords[0];
           var selected = sessionsByID[detailSessionID] || {};
-          document.getElementById("detailTitle").textContent = displayText(
+          document.getElementById("detailTitle").textContent = titleText(
             selected.summary ||
               first.user_text ||
               selected.project ||
               t("untitled"),
           );
-          document.getElementById("detailMeta").textContent =
-            keyName(first.key_id || selected.key_id) +
-            " · " +
-            detailTotal +
-            " " +
-            t("turnsLabel") +
-            " · " +
-            localTime(first.last_at);
+          document.getElementById("detailMeta").innerHTML = renderMetaChips([
+            esc(selected.project), modelLabel(first.model || selected.model),
+            esc(insightNumber(detailTotal, 0) + " " + t("turnsLabel")),
+            esc(localTime(first.last_at)), esc(keyName(first.key_id || selected.key_id)),
+          ]);
         }
         document.getElementById("detail").innerHTML = detailRecords
           .map(function (record, index) {
@@ -1943,42 +2393,18 @@
         lastDetail = detailRecords;
         window.scrollTo(0, 0);
       }
+      function renderMetaChips(parts) {
+        return parts.filter(Boolean).map(function (part) { return '<span class="meta-chip">' + part + '</span>'; }).join("");
+      }
+      function clockTime(value) {
+        return new Date(value).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-US", {hour: "numeric", minute: "2-digit"});
+      }
       function renderTurnSummary(turn, number) {
-        var tools = turn.tool_names || [];
-        var hasFinalText = !!turn.final_text;
-        var finalText = turn.final_text || t("noFinalAnswer");
-        var turnStats = t("turnRequestCount", {
-          requests: turn.requests || 0,
-        });
-        if (tools.length)
-          turnStats += " · " + t("turnToolCount", { tools: tools.length });
-        return (
-          '<article class="panel turn-card" onclick="openTurn(decodeURIComponent(\'' +
-          encodeURIComponent(turn.turn_id) +
-          '\'))"><div class="turn-primary"><section><h3>' +
-          esc(t("userCommand")) +
-          '</h3><div class="turn-text">' +
-          esc(turn.user_text || t("untitled")) +
-          '</div></section><section class="turn-final"><h3>' +
-          esc(t("finalAnswer")) +
-          '</h3><div class="turn-text' +
-          (hasFinalText ? "" : " placeholder-text") +
-          '">' +
-          esc(finalText) +
-          '</div></section></div><div class="conversation-meta">#' +
-          number +
-          " · " +
-          esc(
-            turnStats +
-              " · " +
-              [keyName(turn.key_id), turn.model, localTime(turn.last_at)]
-                .filter(Boolean)
-                .join(" · "),
-          ) +
-          " · " +
-          esc(t("openTurn")) +
-          "</div></article>"
-        );
+        return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
+          esc(t("userRole")) + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
+          renderExpandableTurnText(turn.final_text || t("noFinalAnswer"), !turn.final_text, true) +
+          '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
+          '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
       }
       function openTurn(id) {
         location.hash =
@@ -2018,27 +2444,24 @@
         );
         var turn = page.turn || {};
         turnProcessTotal = page.total || 0;
-        var titleText = displayText(turn.user_text || t("untitled"));
+        var turnTitle = titleText(turn.user_text);
         document.getElementById("turnTitle").textContent =
-          titleText.length > 180 ? titleText.slice(0, 180) + "…" : titleText;
-        document.getElementById("turnMeta").textContent = [
-          keyName(turn.key_id),
-          turn.model,
-          localTime(turn.last_at),
-        ]
-          .filter(Boolean)
-          .join(" · ");
+          turnTitle.length > 100 ? turnTitle.slice(0, 100) + "…" : turnTitle;
+        document.getElementById("turnTitle").title = turnTitle;
+        document.getElementById("turnMeta").innerHTML = renderMetaChips([
+          modelLabel(turn.model), esc(localTime(turn.last_at)), esc(keyName(turn.key_id)),
+        ]);
         document.getElementById("turnPrimary").innerHTML =
-          "<section><h3>" +
-          esc(t("userCommand")) +
+          '<section class="user-message"><h3>' +
+          esc(t("userRole")) +
           "</h3>" +
           renderLazyTurnText(turn.user_text || t("untitled")) +
           '</section><section class="turn-final"><h3>' +
-          esc(t("finalAnswer")) +
+          esc(t("assistantRole")) +
           "</h3>" +
           renderExpandableTurnText(
             turn.final_text || t("noFinalAnswer"),
-            !turn.final_text,
+            !turn.final_text, true,
           ) +
           "</section>";
         document.getElementById("turnProcess").innerHTML = (page.records || [])
@@ -2068,7 +2491,7 @@
           '<details class="panel process-step" data-request-id="' +
           esc(view.request_id) +
           '" ontoggle="loadTurnProcess(this,decodeURIComponent(\'' +
-          encodeURIComponent(view.request_id) +
+          jsId(view.request_id) +
           '\'))"><summary><b>' +
           esc(t("processStep", { number: number })) +
           " · " +
@@ -2146,9 +2569,9 @@
             var tool = tools[id];
             return (
               '<button class="tool-summary" onclick="event.stopPropagation();openTurnTool(decodeURIComponent(\'' +
-              encodeURIComponent(view.request_id) +
+              jsId(view.request_id) +
               "'),decodeURIComponent('" +
-              encodeURIComponent(tool.id) +
+              jsId(tool.id) +
               "'))\">" +
               esc(tool.name) +
               " · " +
@@ -2171,7 +2594,7 @@
         return (
           body +
           "<button onclick=\"openTurnRequest(decodeURIComponent('" +
-          encodeURIComponent(view.request_id) +
+          jsId(view.request_id) +
           "'))\">" +
           esc(t("rawDiagnostics")) +
           "</button>"
@@ -2245,75 +2668,6 @@
       function goLastSessionPage() {
         goSessionPage(Math.max(1, Math.ceil(detailTotal / detailPageSize)));
       }
-      function renderRequestSummary(record, number, previous) {
-        var title =
-          record.summary ||
-          record.requested_model ||
-          record.model ||
-          t("request") + " #" + number;
-        var tools = ((record.facets || {})["tool.name"] || []).slice(0, 4);
-        var responsePreview = record.response_preview || record.error || "";
-        var duplicate = !ExternalArchive.isExternal(record) &&
-          previous && previous.summary && previous.summary === record.summary;
-        var retry = duplicate && record.outcome !== "succeeded";
-        var displayTitle = duplicate
-          ? retry
-            ? t("kindRetry")
-            : t("kindToolContinuation")
-          : title;
-        var badge = retry
-          ? '<span class="kind-badge retry">' + esc(t("kindRetry")) + "</span>"
-          : duplicate
-            ? '<span class="kind-badge">' +
-              esc(t("kindToolContinuation")) +
-              "</span>"
-            : "";
-        return (
-          '<article class="panel request-list-item" onclick="openRequest(\'' +
-          esc(record.request_id) +
-          '\')"><div><div class="conversation-title">' +
-          badge +
-          "#" +
-          number +
-          " · " +
-          esc(displayTitle) +
-          '</div><div class="conversation-meta">' +
-          esc(
-            [
-              record.requested_model || record.model,
-              keyName(record.key_id),
-              tools.length ? t("toolRole") + ": " + tools.join(", ") : "",
-            ]
-              .filter(Boolean)
-              .join(" · "),
-          ) +
-          '</div><div class="request-snippet"><b>' +
-          esc(t("userPreview")) +
-          "：</b>" +
-          esc(
-            duplicate
-              ? retry
-                ? t("retryNoDelta")
-                : t("kindToolContinuation")
-              : title,
-          ) +
-          "</div>" +
-          (responsePreview
-            ? '<div class="response-snippet"><b>' +
-              esc(t("assistantPreview")) +
-              "：</b>" +
-              esc(responsePreview) +
-              "</div>"
-            : "") +
-          '</div><div class="muted ' +
-          (ExternalArchive.isExternal(record) ? "" : record.outcome === "succeeded" ? "status-success" : "status-error") +
-          '">' +
-          esc(
-            ExternalArchive.status(record),
-          ) +
-          "</div></article>"
-        );
-      }
       function openRequest(id) {
         location.hash =
           "#/sessions/" +
@@ -2342,13 +2696,9 @@
         document.getElementById("requestTitle").textContent = displayText(
           view.summary || view.requested_model || view.model || t("request"),
         );
-        document.getElementById("requestMeta").textContent = [
-          keyName(view.key_id),
-          view.requested_model || view.model,
-          localTime(view.started_at),
-        ]
-          .filter(Boolean)
-          .join(" · ");
+        document.getElementById("requestMeta").innerHTML = renderMetaChips([
+          modelLabel(view.requested_model || view.model), esc(localTime(view.started_at)), esc(keyName(view.key_id)),
+        ]);
         document.getElementById("requestDetail").innerHTML =
           renderTimelineView(view);
       }
@@ -2432,9 +2782,9 @@
           entry.call_id
         )
           html +=
-            "<button onclick=\"openToolCall('" +
-            esc(entry.call_id) +
-            "')\">" +
+            "<button onclick=\"openToolCall(decodeURIComponent('" +
+            jsId(entry.call_id) +
+            "'))\">" +
             esc(t("viewTool")) +
             "</button>";
         if (entry.truncated)
@@ -2555,27 +2905,73 @@
           "</article>"
         );
       }
+      function jsId(value) {
+        return encodeURIComponent(String(value == null ? "" : value)).replace(/[!'()*]/g, function (c) {
+          return "%" + c.charCodeAt(0).toString(16).toUpperCase();
+        });
+      }
+      function renderMarkdown(text) {
+        var lines = esc(text).replace(/\r\n?/g, "\n").split("\n"), blocks = [], paragraph = [], list = "", code = null;
+        function inline(value) {
+          return value.replace(/`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/(?:[^\s<>()]|\([^\s<>()]*\))+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g, function (match, mono, label, url, bold, italic) {
+            if (mono) return "<code>" + mono + "</code>";
+            if (label) return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' + label + "</a>";
+            if (bold) return "<strong>" + inline(bold) + "</strong>";
+            return "<em>" + inline(italic) + "</em>";
+          });
+        }
+        function flush() {
+          if (paragraph.length) blocks.push("<p>" + inline(paragraph.join("\n")).replace(/\n/g, "<br>") + "</p>");
+          paragraph = [];
+          if (list) blocks.push("</" + list + ">");
+          list = "";
+        }
+        lines.forEach(function (line) {
+          if (/^\s*```/.test(line)) {
+            flush();
+            if (code === null) code = [];
+            else { blocks.push("<pre><code>" + code.join("\n") + "</code></pre>"); code = null; }
+            return;
+          }
+          if (code !== null) { code.push(line); return; }
+          if (!line.trim()) { flush(); return; }
+          var heading = line.match(/^(#{1,3})\s+(.+)$/), item = line.match(/^\s*(?:([-*])|\d+\.)\s+(.+)$/);
+          if (heading) { flush(); var level = heading[1].length + 1; blocks.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">"); return; }
+          if (item) {
+            var tag = item[1] ? "ul" : "ol";
+            if (list !== tag) { flush(); blocks.push("<" + tag + ">"); list = tag; }
+            blocks.push("<li>" + inline(item[2]) + "</li>");
+            return;
+          }
+          if (list) flush();
+          paragraph.push(line);
+        });
+        flush();
+        if (code !== null) blocks.push("<pre><code>" + code.join("\n") + "</code></pre>");
+        return blocks.join("");
+      }
       function retainFullText(text) {
         var id = "full-" + ++fullTextSequence;
         fullTexts[id] = text;
         return id;
       }
-      function renderExpandableTurnText(text, placeholder) {
-        text = String(text || "");
+      function renderExpandableTurnText(text, placeholder, markdown) {
+        text = displayText(text || "");
+        var render = markdown && !placeholder ? renderMarkdown : esc;
         var textClass =
-          "turn-text turn-text-detail" +
+          "turn-text turn-text-detail" + (markdown && !placeholder ? " markdown" : "") +
           (placeholder ? " placeholder-text" : "");
         if (text.length <= 1600)
-          return '<div class="' + textClass + '">' + esc(text) + "</div>";
+          return '<div class="' + textClass + '">' + render(text) + "</div>";
         var id = retainFullText(text);
         return (
-          '<div class="turn-text">' +
-          esc(text.slice(0, 1200) + "…") +
-          "</div><button onclick=\"expandFullText('" +
+          '<div class="turn-text' + (markdown ? ' markdown' : '') + '">' +
+          render(text.slice(0, 1200) + "…") +
+          "</div><button onclick=\"event.stopPropagation();expandFullText('" +
           id +
           "',this)\">" +
           esc(t("expandFull")) +
-          '</button><div class="turn-text turn-text-detail full-content" style="display:none"></div>'
+          '</button><div class="turn-text turn-text-detail full-content' + (markdown ? ' markdown' : '') + '" style="display:none"></div>'
         );
       }
       function renderLazyTurnText(text) {
@@ -2583,7 +2979,7 @@
         if (!text.endsWith("…") && text.length < 150)
           return '<div class="turn-text turn-text-detail">' + esc(text) + "</div>";
         return (
-          '<div class="turn-text turn-text-detail">' +
+          '<div class="turn-text">' +
           esc(text) +
           '</div><button onclick="expandRemoteTurnText(this)">' +
           esc(t("expandFull")) +
@@ -2605,6 +3001,7 @@
             if (result.status === "ok") {
               target.textContent = displayText(result.text || "");
               target.style.display = "block";
+              button.previousElementSibling.style.display = "none";
               button.remove();
               return;
             }
@@ -2622,7 +3019,9 @@
       }
       function expandFullText(id, button) {
         var target = button.nextElementSibling;
-        target.textContent = displayText(fullTexts[id] || "");
+        if (target.classList.contains("markdown")) target.innerHTML = renderMarkdown(fullTexts[id] || "");
+        else target.textContent = displayText(fullTexts[id] || "");
+        button.previousElementSibling.style.display = "none";
         target.style.display = "block";
         button.remove();
         delete fullTexts[id];
@@ -3137,22 +3536,23 @@
           );
         var roleKey = {assistant: "assistantRole", tool: "toolRole", compaction: "compactionRole", user: "userRole"}[role];
         var roleLabel = roleKey ? t(roleKey) : role;
+        text = displayText(text);
         var preview = text.length > 4000 ? text.slice(0, 1400) + "…" : text;
         var id = text.length > 4000 ? retainFullText(text) : "";
         var full = id
-          ? "<button onclick=\"expandFullText('" +
+          ? "<button onclick=\"event.stopPropagation();expandFullText('" +
             id +
             "',this)\">" +
             t("expandFull") +
-            '</button><div class="message-text full-content" style="display:none"></div>'
+            '</button><div class="message-text full-content' + (role === 'assistant' ? ' markdown' : '') + '" style="display:none"></div>'
           : "";
         return (
           '<div class="message-bubble ' +
           esc(role) +
           '"><div class="message-role">' +
           esc(roleLabel + (label ? " · " + label : "")) +
-          '</div><div class="message-text">' +
-          esc(preview) +
+          '</div><div class="message-text' + (role === 'assistant' ? ' markdown' : '') + '">' +
+          (role === 'assistant' ? renderMarkdown(preview) : esc(preview)) +
           "</div>" +
           full +
           "</div>"
@@ -3253,19 +3653,36 @@
       function closeDrawer() {
         goSessions();
       }
+      function routePath() {
+        return (location.hash || "#/insights")
+          .replace(/^#\/?/, "")
+          .split("/")
+          .filter(Boolean)
+          .map(decodeURIComponent);
+      }
       async function route() {
         if (
           !session ||
           document.getElementById("login").style.display !== "none"
         )
           return;
-        var path = (location.hash || "#/sessions")
-          .replace(/^#\/?/, "")
-          .split("/")
-          .filter(Boolean)
-          .map(decodeURIComponent);
+        var path = routePath();
+        var isInsights = !path.length || path[0] === "insights";
+        document.getElementById("insightsView").hidden = !isInsights;
+        document.getElementById("insightsTab").toggleAttribute("aria-current", isInsights);
+        document.getElementById("sessionsTab").toggleAttribute("aria-current", !isInsights);
+        document.getElementById(isInsights ? "insightsTab" : "sessionsTab").setAttribute("aria-current", "page");
+        if (isInsights) {
+          document.getElementById("listView").style.display = "none";
+          ["drawer", "requestView", "turnView", "subDetailView"].forEach(function (id) {
+            document.getElementById(id).classList.remove("open");
+          });
+          await loadInsights();
+          return;
+        }
+        insightsRequest++;
         if (path[0] !== "sessions") {
-          location.hash = "#/sessions";
+          location.hash = "#/insights";
           return;
         }
         document.getElementById("subDetailView").classList.remove("open");
@@ -3346,6 +3763,7 @@
         document.getElementById("subDetailView").classList.remove("open");
         currentTurnID = "";
         document.getElementById("listView").style.display = "grid";
+        await loadSessions();
       }
       function displayText(x) {
         var value = String(x == null ? "" : x);
@@ -3357,6 +3775,14 @@
           value = decoded;
         }
         return value;
+      }
+      function titleText(x) {
+        var text = displayText(x);
+        // Titles are a truncated label, so decoding percent-encoded agent
+        // task IDs here cannot change archived content shown elsewhere.
+        try { text = decodeURIComponent(text); } catch (ignore) {}
+        text = text.replace(/<\/?[A-Za-z_][\w.-]*(\s[^<>]*)?>/g, " ").replace(/\s+/g, " ").trim();
+        return text || t("untitled");
       }
       function esc(x) {
         return displayText(x).replace(/[&<>"']/g, function (c) {
@@ -3384,7 +3810,8 @@
           applyI18n();
           if (
             session &&
-            document.getElementById("login").style.display === "none"
+            document.getElementById("login").style.display === "none" &&
+            document.getElementById("insightsView").hidden
           )
             loadSessions();
         }
@@ -3402,6 +3829,7 @@
         document.getElementById("base").value = location.origin;
       }
       window.addEventListener("hashchange", function () {
+        window.scrollTo(0, 0);
         route().catch(function (e) {
           console.error(e);
           hideLoading();

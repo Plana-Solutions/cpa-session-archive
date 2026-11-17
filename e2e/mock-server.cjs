@@ -21,7 +21,7 @@ const longSystem = (
   "系统指令必须按需加载，并允许查看全文。LONG-SYSTEM-CONTEXT ".repeat(500)
 ).slice(0, 17704) + "END-OF-SYSTEM-INSTRUCTIONS";
 const longAssistant =
-  "我会先说明处理结果，再展示必要的中间过程。" +
+  "**bold** <img src=x onerror=alert(1)>\n\n# Result\n*italic* and `inline`\n\n- first item\n- second item\n\n1. ordered item\n\n[Safe link](https://example.com/?q=a%26b) [Unsafe link](javascript:alert(1)) literal a%26b\n\n```js\nconst html = \"<script>alert(1)</script>\";\n```\n\n我会先说明处理结果，再展示必要的中间过程。" +
   "LONG-ASSISTANT-BODY ".repeat(280) +
   "END-OF-COMPLETE-ASSISTANT-ANSWER";
 const longToolOutput =
@@ -29,6 +29,7 @@ const longToolOutput =
   "TOOL-OUTPUT-LINE\n".repeat(7000) +
   "END-OF-LONG-TOOL-OUTPUT";
 let turnTextPolls = 0;
+const insightsBuilt = new Set();
 const originalRequest = {
   model: "gpt-5.6-sol",
   instructions: longSystem,
@@ -142,6 +143,10 @@ function json(response, value) {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, "http://127.0.0.1:4173");
+  if (url.pathname === "/external.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+    return response.end(fs.readFileSync(path.join(__dirname, "..", "internal", "archive", "web", "external.js")));
+  }
   if (url.pathname === "/healthz") return json(response, { ok: true });
   if (url.pathname === "/" || url.pathname === "/management.html") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -155,6 +160,52 @@ const server = http.createServer((request, response) => {
     });
   }
   const prefix = "/v0/management/plugins/cpa-session-archive";
+  if (url.pathname === prefix + "/insights") {
+    const window = url.searchParams.get("days");
+    if ((window === "7" || window === "90") && !insightsBuilt.has(window)) {
+      insightsBuilt.add(window);
+      return json(response, { status: "building" });
+    }
+    const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days")) || 30));
+    const to = new Date("2026-11-17T20:00:00Z");
+    const from = new Date("2026-11-17T00:00:00Z");
+    from.setUTCDate(from.getUTCDate() - days + 1);
+    const models = [
+      ["claude-opus-5-5", "anthropic", 12340, 31.2, .023, .041],
+      ["gpt-6.1-sol", "openai", 8950, 18.7, .014, .027],
+      ["claude-sonnet-5-5", "anthropic", 5640, 12.4, .031, .018],
+      ["gpt-6-astra", "openai", 3310, 45.8, .019, .034],
+      ["gemini-3-pro", "google", 2140, 22.6, .048, .012],
+      ["kimi-k3", "other", 640, 16.3, .056, .022],
+    ].map(([model, provider, base, latency, failure, cancel], index) => {
+      const requests = Math.round(base * days / 30);
+      const turns = model === "claude-sonnet-5-5" ? 0 : Math.round(requests / (7.4 - index * .8));
+      return { model, provider, requests, sessions: Math.max(1, Math.round(requests / 30)), turns,
+        steps_per_turn: turns ? requests / turns : 0, avg_latency_seconds: latency, failure_rate: failure, cancel_rate: cancel };
+    });
+    const daily = Array.from({ length: days }, (_, index) => {
+      const date = new Date(from); date.setUTCDate(date.getUTCDate() + index);
+      return { day: date.toISOString().slice(0, 10), requests: { anthropic: 0, openai: 0, google: 0, other: 0 } };
+    });
+    const weights = daily.map((_, index) => 2 + (index * 7 % 11));
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    for (const model of models) {
+      let remaining = model.requests;
+      daily.forEach((day, index) => {
+        const count = index === days - 1 ? remaining : Math.floor(model.requests * weights[index] / totalWeight);
+        day.requests[model.provider] += count;
+        remaining -= count;
+      });
+    }
+    return json(response, {
+      window_days: days, from: from.toISOString(), to: to.toISOString(), generated_at: to.toISOString(),
+      totals: { requests: models.reduce((sum, m) => sum + m.requests, 0),
+        sessions: models.reduce((sum, m) => sum + m.sessions, 0),
+        turns: models.reduce((sum, m) => sum + m.turns, 0), models: models.length },
+      models, daily,
+    });
+  }
+  if (url.pathname === prefix + "/external-sources") return json(response, []);
   if (url.pathname === prefix + "/stats") {
     return json(response, {
       compressed_bytes: 987654321,
@@ -171,6 +222,7 @@ const server = http.createServer((request, response) => {
         records: 23,
       },
       { name: "client", value: "codex", sessions: 1, records: 23 },
+      { name: "model.resolved", value: "gpt-6.1-sol", sessions: 1, records: 23 },
       {
         name: "tool.name",
         value: "shell_command",
@@ -186,7 +238,7 @@ const server = http.createServer((request, response) => {
     ]);
   }
   if (url.pathname === prefix + "/sessions") {
-    return json(response, [
+    const rows = [
       {
         session_id: sessionID,
         summary: escapedSummary,
@@ -198,7 +250,13 @@ const server = http.createServer((request, response) => {
         thread_sources: ["user"],
         kinds: ["turn"],
       },
-    ]);
+      ...(url.searchParams.has("project.name") ? [] : [{
+        session_id: "second-session", summary: "Review API documentation", project: "docs",
+        key_id: "sha256:another-key", model: "claude-opus-5-5", requests: 3,
+        last_at: "2026-08-02T12:35:56+08:00",
+      }]),
+    ];
+    return json(response, rows);
   }
   if (url.pathname === prefix + "/turn-text") {
     turnTextPolls++;

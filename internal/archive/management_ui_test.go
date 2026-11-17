@@ -31,7 +31,6 @@ func TestManagementUIContainsBilingualFacetedExperience(t *testing.T) {
 		[]byte("parent.document.documentElement"),
 		[]byte("normalizeKeyHash"),
 		[]byte(`name === "key.id" || name === "caller.scope"`),
-		[]byte("var displayTitle = duplicate"),
 		[]byte("event.key==='Enter'"),
 		[]byte("thread_sources"),
 		[]byte("/turns?session_id="),
