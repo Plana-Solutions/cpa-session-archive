@@ -25,6 +25,7 @@ test("insights is the default route and window changes refetch the fleet", async
   });
   await page.locator("#insightsDays").selectOption("7");
   await refetch;
+  await expect(page.locator(".insights-status")).toBeVisible();
   await expect(page.locator(".daily-chart rect")).toHaveCount(28);
   await expect(page.locator(".kpi-number").first()).toHaveText("7,703");
   await page.evaluate(() => { document.documentElement.lang = "en"; });

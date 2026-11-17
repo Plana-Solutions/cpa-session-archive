@@ -18,7 +18,7 @@ import (
 
 type server struct {
 	insightsMu    sync.Mutex
-	insightsCache map[int]archive.Insights
+	insightsCache map[int]*insightsEntry
 	s             *archive.Store
 	q             chan archive.Record
 	ticketMu      sync.Mutex
@@ -122,6 +122,7 @@ func main() {
 	}
 	s := &server{s: st, q: make(chan archive.Record, 4096), tickets: map[string]exportTicket{}, turnTextJobs: map[string]bool{}}
 	go s.writer()
+	go s.cachedInsights(30, time.Now().UTC())
 	http.HandleFunc("/healthz", s.health)
 	http.HandleFunc("/ingest", s.ingest)
 	http.HandleFunc("/v1/stats", s.stats)

@@ -1444,8 +1444,15 @@
         document.getElementById("insightsGenerated").textContent = "";
         content.innerHTML = '<p class="insights-status">' + esc(t("insightsLoading")) + '</p>';
         try {
-          var data = await api("/insights?days=" + days + "&min_requests=20");
-          if (request !== insightsRequest) return;
+          var data;
+          for (var attempt = 0; attempt < 150; attempt++) {
+            data = await api("/insights?days=" + days + "&min_requests=20");
+            if (request !== insightsRequest) return;
+            if (data.status !== "building") break;
+            await new Promise(function (resolve) { setTimeout(resolve, 2000); });
+            if (request !== insightsRequest) return;
+          }
+          if (data.status === "building") throw Error("insights build timeout");
           insightsData = data;
           renderInsights(data);
         } catch (error) {

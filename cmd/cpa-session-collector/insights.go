@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -8,6 +10,17 @@ import (
 	"cpa-session-archive/internal/archive"
 )
 
+const insightsTTL = 5 * time.Minute
+
+type insightsEntry struct {
+	value    archive.Insights
+	ready    bool
+	building bool
+}
+
+// A cold scan of turn_records takes minutes on the production volume while the
+// plugin proxy times out after seconds, so requests never wait on a scan: they
+// get the cached result (possibly stale) or a building status to poll.
 func (s *server) insights(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -24,22 +37,11 @@ func (s *server) insights(w http.ResponseWriter, r *http.Request) {
 	}
 	minimum = max(0, minimum)
 
-	// Serialize cache misses so concurrent page loads do not rescan the slow volume.
-	s.insightsMu.Lock()
-	defer s.insightsMu.Unlock()
-	now := time.Now().UTC()
-	cached, found := s.insightsCache[days]
-	generated, _ := time.Parse(time.RFC3339Nano, cached.GeneratedAt)
-	if !found || now.Sub(generated) >= 5*time.Minute || generated.UTC().Day() != now.Day() {
-		cached, err = s.s.Insights(r.Context(), days, now)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if s.insightsCache == nil {
-			s.insightsCache = map[int]archive.Insights{}
-		}
-		s.insightsCache[days] = cached
+	cached, ready := s.cachedInsights(days, time.Now().UTC())
+	if !ready {
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]any{"status": "building"})
+		return
 	}
 	out := cached
 	out.Models = []archive.ModelInsight{}
@@ -49,4 +51,36 @@ func (s *server) insights(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, out)
+}
+
+func (s *server) cachedInsights(days int, now time.Time) (archive.Insights, bool) {
+	s.insightsMu.Lock()
+	defer s.insightsMu.Unlock()
+	if s.insightsCache == nil {
+		s.insightsCache = map[int]*insightsEntry{}
+	}
+	entry := s.insightsCache[days]
+	if entry == nil {
+		entry = &insightsEntry{}
+		s.insightsCache[days] = entry
+	}
+	generated, _ := time.Parse(time.RFC3339Nano, entry.value.GeneratedAt)
+	stale := !entry.ready || now.Sub(generated) >= insightsTTL || generated.UTC().YearDay() != now.YearDay()
+	if stale && !entry.building {
+		entry.building = true
+		go s.buildInsights(days, entry)
+	}
+	return entry.value, entry.ready
+}
+
+func (s *server) buildInsights(days int, entry *insightsEntry) {
+	value, err := s.s.Insights(context.Background(), days, time.Now().UTC())
+	s.insightsMu.Lock()
+	defer s.insightsMu.Unlock()
+	entry.building = false
+	if err != nil {
+		log.Printf("insights %dd: %v", days, err)
+		return
+	}
+	entry.value, entry.ready = value, true
 }
