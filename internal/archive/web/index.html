@@ -2187,7 +2187,7 @@
           if (q && visible) x.open = true;
         });
       }
-      var appliedFacets = {};
+      var appliedFacets = {}, appliedLimit = 100;
       function facetControls() {
         return Array.from(document.querySelectorAll("[data-facet]"));
       }
@@ -2195,12 +2195,14 @@
         facetControls().forEach(function (node) {
           node.value = appliedFacets[node.dataset.facet] || "";
         });
+        document.getElementById("limit").value = appliedLimit;
       }
       function applyFilters() {
         appliedFacets = {};
         facetControls().forEach(function (node) {
           if (node.value) appliedFacets[node.dataset.facet] = node.value;
         });
+        appliedLimit = Math.min(1000, Math.max(1, parseInt(document.getElementById("limit").value, 10) || 100));
         return loadSessions();
       }
       function updateActiveFilters() {
@@ -2221,7 +2223,7 @@
         Object.keys(appliedFacets).forEach(function (name) {
           q.set(name, appliedFacets[name]);
         });
-        q.set("limit", document.getElementById("limit").value || 100);
+        q.set("limit", appliedLimit);
         var rows = await api(
           "/sessions?" + q,
           t("loadingSessions"),
@@ -2268,7 +2270,7 @@
       }
       function renderSessionRows() {
         var rows = sessionList.loaded.filter(function (row) {
-          return [titleText(row.summary), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
+          return [titleText(row.summary || row.project), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
         });
         document.getElementById("resultCount").textContent = t("loadedCount", {
           shown: insightNumber(rows.length, 0), loaded: insightNumber(sessionList.loaded.length, 0),
@@ -2331,7 +2333,6 @@
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
-        fullTexts = {};
         var baseOffset = (detailPage - 1) * detailPageSize;
         var order = document.getElementById("sessionOrder").value || "desc";
         var page = await api(
@@ -2346,6 +2347,7 @@
           t("loadingTurns"),
           sqlTemplates.session,
         );
+        fullTexts = {};
         detailTotal = page.total;
         detailRecords = page.turns || [];
         if (detailRecords[0]) {
@@ -2661,75 +2663,6 @@
       function goLastSessionPage() {
         goSessionPage(Math.max(1, Math.ceil(detailTotal / detailPageSize)));
       }
-      function renderRequestSummary(record, number, previous) {
-        var title =
-          record.summary ||
-          record.requested_model ||
-          record.model ||
-          t("request") + " #" + number;
-        var tools = ((record.facets || {})["tool.name"] || []).slice(0, 4);
-        var responsePreview = record.response_preview || record.error || "";
-        var duplicate = !ExternalArchive.isExternal(record) &&
-          previous && previous.summary && previous.summary === record.summary;
-        var retry = duplicate && record.outcome !== "succeeded";
-        var displayTitle = duplicate
-          ? retry
-            ? t("kindRetry")
-            : t("kindToolContinuation")
-          : title;
-        var badge = retry
-          ? '<span class="kind-badge retry">' + esc(t("kindRetry")) + "</span>"
-          : duplicate
-            ? '<span class="kind-badge">' +
-              esc(t("kindToolContinuation")) +
-              "</span>"
-            : "";
-        return (
-          '<article class="panel request-list-item" onclick="openRequest(\'' +
-          esc(record.request_id) +
-          '\')"><div><div class="conversation-title">' +
-          badge +
-          "#" +
-          number +
-          " · " +
-          esc(displayTitle) +
-          '</div><div class="conversation-meta">' +
-          esc(
-            [
-              record.requested_model || record.model,
-              keyName(record.key_id),
-              tools.length ? t("toolRole") + ": " + tools.join(", ") : "",
-            ]
-              .filter(Boolean)
-              .join(" · "),
-          ) +
-          '</div><div class="request-snippet"><b>' +
-          esc(t("userPreview")) +
-          "：</b>" +
-          esc(
-            duplicate
-              ? retry
-                ? t("retryNoDelta")
-                : t("kindToolContinuation")
-              : title,
-          ) +
-          "</div>" +
-          (responsePreview
-            ? '<div class="response-snippet"><b>' +
-              esc(t("assistantPreview")) +
-              "：</b>" +
-              esc(responsePreview) +
-              "</div>"
-            : "") +
-          '</div><div class="muted ' +
-          (ExternalArchive.isExternal(record) ? "" : record.outcome === "succeeded" ? "status-success" : "status-error") +
-          '">' +
-          esc(
-            ExternalArchive.status(record),
-          ) +
-          "</div></article>"
-        );
-      }
       function openRequest(id) {
         location.hash =
           "#/sessions/" +
@@ -2844,9 +2777,9 @@
           entry.call_id
         )
           html +=
-            "<button onclick=\"openToolCall('" +
-            esc(entry.call_id) +
-            "')\">" +
+            "<button onclick=\"openToolCall(decodeURIComponent('" +
+            jsId(entry.call_id) +
+            "'))\">" +
             esc(t("viewTool")) +
             "</button>";
         if (entry.truncated)
@@ -2975,7 +2908,7 @@
       function renderMarkdown(text) {
         var lines = esc(text).replace(/\r\n?/g, "\n").split("\n"), blocks = [], paragraph = [], list = "", code = null;
         function inline(value) {
-          return value.replace(/`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g, function (match, mono, label, url, bold, italic) {
+          return value.replace(/`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/(?:[^\s<>()]|\([^\s<>()]*\))+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g, function (match, mono, label, url, bold, italic) {
             if (mono) return "<code>" + mono + "</code>";
             if (label) return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' + label + "</a>";
             if (bold) return "<strong>" + inline(bold) + "</strong>";

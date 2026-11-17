@@ -305,7 +305,9 @@ test("unapplied filter choices never become chips or queries", async ({ page }) 
   await panel.locator(":scope > summary").click();
   await page.locator("#facetSearch").fill("project");
   await select.selectOption(value);
+  await page.locator("#limit").fill("1");
   await page.keyboard.press("Escape");
+  await expect(page.locator("#limit")).toHaveValue("100");
   await expect(page.locator("#activeFilters .chip")).toHaveCount(0);
   await expect(select).toHaveValue("");
   await page.locator(".session-row").first().click();
@@ -313,6 +315,7 @@ test("unapplied filter choices never become chips or queries", async ({ page }) 
   await expect(page.locator(".session-row").first()).toBeVisible();
   const facet = await select.getAttribute("data-facet");
   expect(queries.some(url => new URL(url).searchParams.has(facet))).toBe(false);
+  expect(queries.some(url => new URL(url).searchParams.get("limit") === "1")).toBe(false);
   await panel.locator(":scope > summary").click();
   await page.locator("#facetSearch").fill("project");
   await select.selectOption(value);
@@ -326,7 +329,7 @@ test("unapplied filter choices never become chips or queries", async ({ page }) 
 test("markdown link boundaries and inline handler ids survive hostile input", async ({ page }) => {
   const result = await page.evaluate(() => {
     const host = document.createElement("div");
-    host.innerHTML = renderMarkdown("([docs](https://example.com/x)) and **[bold](https://example.com/b)**");
+    host.innerHTML = renderMarkdown("([docs](https://example.com/x)) and **[bold](https://example.com/b)** and [wiki](https://example.com/a(b))");
     const id = "turn's-(id)*!";
     return {
       hrefs: [...host.querySelectorAll("a")].map(a => a.getAttribute("href")),
@@ -335,7 +338,7 @@ test("markdown link boundaries and inline handler ids survive hostile input", as
       roundTrip: decodeURIComponent(jsId(id)) === id,
     };
   });
-  expect(result.hrefs).toEqual(["https://example.com/x", "https://example.com/b"]);
+  expect(result.hrefs).toEqual(["https://example.com/x", "https://example.com/b", "https://example.com/a(b)"]);
   expect(result.boldLink).toBe(true);
   expect(result.encoded).not.toMatch(/['()*!]/);
   expect(result.roundTrip).toBe(true);
