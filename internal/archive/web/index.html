@@ -1035,7 +1035,7 @@
         <div id="cards" class="session-kpis"></div>
         <div class="sessions-toolbar">
           <input id="sessionSearch" type="search" data-i18n-placeholder="searchLoaded" oninput="searchSessions(this.value)" />
-          <details id="filterSidebar">
+          <details id="filterSidebar" ontoggle="if (!this.open) writeFacetControls()">
             <summary class="filter-toggle"><span data-i18n="filtersLabel"></span><span id="activeCount" class="badge">0</span></summary>
             <div class="filter-panel">
               <div class="filter-head"><h2 data-i18n="facetedFilter"></h2><button class="ghost" data-i18n="close" onclick="closeFilters()"></button></div>
@@ -1700,6 +1700,7 @@
         sessionsByID = {},
         detailSessionID = "",
         detailPage = 1,
+        sessionPageRequest = 0,
         detailPageSize = 20,
         detailTotal = 0,
         detailRecords = [],
@@ -2202,7 +2203,8 @@
         facetControls().forEach(function (node) {
           if (node.value) appliedFacets[node.dataset.facet] = node.value;
         });
-        appliedLimit = Math.min(1000, Math.max(1, parseInt(document.getElementById("limit").value, 10) || 100));
+        var limit = document.getElementById("limit").valueAsNumber;
+        appliedLimit = Number.isInteger(limit) ? Math.min(1000, Math.max(1, limit)) : 100;
         return loadSessions();
       }
       function updateActiveFilters() {
@@ -2333,6 +2335,7 @@
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
+        var request = ++sessionPageRequest, sessionHash = "#/sessions/" + encodeURIComponent(detailSessionID);
         var baseOffset = (detailPage - 1) * detailPageSize;
         var order = document.getElementById("sessionOrder").value || "desc";
         var page = await api(
@@ -2347,6 +2350,7 @@
           t("loadingTurns"),
           sqlTemplates.session,
         );
+        if (request !== sessionPageRequest || location.hash !== sessionHash) return;
         fullTexts = {};
         detailTotal = page.total;
         detailRecords = page.turns || [];

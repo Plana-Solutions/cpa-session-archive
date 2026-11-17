@@ -343,3 +343,30 @@ test("markdown link boundaries and inline handler ids survive hostile input", as
   expect(result.encoded).not.toMatch(/['()*!]/);
   expect(result.roundTrip).toBe(true);
 });
+
+test("the row limit only changes on a valid applied value", async ({ page }) => {
+  const summary = page.locator("#filterSidebar > summary");
+  await summary.click();
+  await page.locator("#limit").fill("1");
+  await summary.click();
+  await summary.click();
+  await expect(page.locator("#limit")).toHaveValue("100");
+  const applied = page.waitForRequest(request => request.url().includes("/sessions?"));
+  await page.locator("#limit").fill("1e2");
+  await page.locator(".filter-panel button.primary").click();
+  expect(new URL((await applied).url()).searchParams.get("limit")).toBe("100");
+});
+
+test("a late session page cannot wipe the open turn's expandable text", async ({ page }) => {
+  await page.route(/\/turns\?.*order=/, async route => {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page.goto("/#/sessions/mock-session-long-content");
+  await page.goto("/#/sessions/mock-session-long-content/turns/mock-turn-long-content");
+  const answer = page.locator("#turnPrimary .turn-final");
+  await expect(answer).toBeVisible();
+  await page.waitForTimeout(2000);
+  await answer.getByRole("button", { name: "展开完整内容" }).click();
+  await expect(answer).toContainText("END-OF-COMPLETE-ASSISTANT-ANSWER");
+});
