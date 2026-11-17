@@ -3817,10 +3817,14 @@
           if (decoded === value) break;
           value = decoded;
         }
-        try { return decodeURIComponent(value); } catch (ignore) { return value; }
+        return value;
       }
       function titleText(x) {
-        var text = displayText(x).replace(/<\/?[A-Za-z_][\w.-]*(\s[^<>]*)?>/g, " ").replace(/\s+/g, " ").trim();
+        var text = displayText(x);
+        // Titles are a truncated label, so decoding percent-encoded agent
+        // task IDs here cannot change archived content shown elsewhere.
+        try { text = decodeURIComponent(text); } catch (ignore) {}
+        text = text.replace(/<\/?[A-Za-z_][\w.-]*(\s[^<>]*)?>/g, " ").replace(/\s+/g, " ").trim();
         return text || t("untitled");
       }
       function esc(x) {

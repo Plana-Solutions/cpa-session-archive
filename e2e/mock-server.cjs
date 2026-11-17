@@ -21,7 +21,7 @@ const longSystem = (
   "系统指令必须按需加载，并允许查看全文。LONG-SYSTEM-CONTEXT ".repeat(500)
 ).slice(0, 17704) + "END-OF-SYSTEM-INSTRUCTIONS";
 const longAssistant =
-  "**bold** <img src=x onerror=alert(1)>\n\n# Result\n*italic* and `inline`\n\n- first item\n- second item\n\n1. ordered item\n\n[Safe link](https://example.com) [Unsafe link](javascript:alert(1))\n\n```js\nconst html = \"<script>alert(1)</script>\";\n```\n\n我会先说明处理结果，再展示必要的中间过程。" +
+  "**bold** <img src=x onerror=alert(1)>\n\n# Result\n*italic* and `inline`\n\n- first item\n- second item\n\n1. ordered item\n\n[Safe link](https://example.com/?q=a%26b) [Unsafe link](javascript:alert(1)) literal a%26b\n\n```js\nconst html = \"<script>alert(1)</script>\";\n```\n\n我会先说明处理结果，再展示必要的中间过程。" +
   "LONG-ASSISTANT-BODY ".repeat(280) +
   "END-OF-COMPLETE-ASSISTANT-ANSWER";
 const longToolOutput =

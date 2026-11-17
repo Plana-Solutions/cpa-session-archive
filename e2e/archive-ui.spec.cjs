@@ -285,7 +285,8 @@ test("markdown preserves prose structure, safe links and literal code after expa
   await expect(answer.locator("ul li")).toHaveText(["first item", "second item"]);
   await expect(answer.locator("ol li")).toHaveText(["ordered item"]);
   await expect(answer.locator("a")).toHaveCount(1);
-  await expect(answer.locator("a")).toHaveAttribute("href", "https://example.com");
+  await expect(answer.locator("a")).toHaveAttribute("href", "https://example.com/?q=a%26b");
+  await expect(answer).toContainText("literal a%26b");
   await expect(answer.locator("a")).toHaveAttribute("rel", "noopener noreferrer");
   await expect(answer.locator("pre code")).toContainText('<script>alert(1)</script>');
   await expect(answer.locator("script")).toHaveCount(0);
