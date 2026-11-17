@@ -69,7 +69,9 @@ func (s *server) currentInsights(now time.Time) (insightsSnapshot, bool) {
 	// A snapshot from another UTC day or from the future covers the wrong
 	// windows, so it is withheld rather than served stale.
 	servable := snap.windows != nil && !snap.generated.After(now) && snap.generated.Format(time.DateOnly) == now.Format(time.DateOnly)
-	if (!servable || now.Sub(snap.generated) >= insightsTTL) && !s.insightsScanning {
+	// Insights read only turn_records, so a scan before the projection
+	// backfill finishes would publish a partial fleet as fresh.
+	if s.projectionReady && (!servable || now.Sub(snap.generated) >= insightsTTL) && !s.insightsScanning {
 		s.insightsScanning = true
 		go s.buildInsights()
 	}
@@ -87,4 +89,11 @@ func (s *server) buildInsights() {
 		return
 	}
 	s.insightsSnapshot = insightsSnapshot{generated: now, windows: windows}
+}
+
+func (s *server) projectionComplete() {
+	s.insightsMu.Lock()
+	s.projectionReady = true
+	s.insightsMu.Unlock()
+	s.currentInsights(time.Now().UTC())
 }

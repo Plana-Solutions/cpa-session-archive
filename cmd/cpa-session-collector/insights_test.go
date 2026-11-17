@@ -48,12 +48,19 @@ func TestInsightsBuildOnceThenServeEveryWindow(t *testing.T) {
 		return s.insightsScanning
 	}
 
-	cold := httptest.NewRecorder()
-	s.insights(cold, httptest.NewRequest("GET", "/v1/insights", nil))
-	sent := cold.Result()
-	if sent.StatusCode != 202 || sent.Header.Get("Content-Type") != "application/json" || !strings.Contains(cold.Body.String(), `"building"`) {
-		t.Fatalf("cold request = %d %q %s, want 202 JSON building", sent.StatusCode, sent.Header.Get("Content-Type"), cold.Body.String())
+	for range 3 {
+		cold := httptest.NewRecorder()
+		s.insights(cold, httptest.NewRequest("GET", "/v1/insights", nil))
+		sent := cold.Result()
+		if sent.StatusCode != 202 || sent.Header.Get("Content-Type") != "application/json" || !strings.Contains(cold.Body.String(), `"building"`) {
+			t.Fatalf("pre-projection request = %d %q %s, want 202 JSON building", sent.StatusCode, sent.Header.Get("Content-Type"), cold.Body.String())
+		}
+		if scanning() {
+			t.Fatal("scan started before the turn projection was complete")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	s.projectionComplete()
 	first := ready("")
 	if first.WindowDays != 30 || len(first.Models) != 0 || first.Totals.Requests != 1 {
 		t.Fatalf("default = %+v", first)
