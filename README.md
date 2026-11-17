@@ -76,7 +76,7 @@ Endpoints:
 
 - GET /healthz
 - GET /v1/stats
-- GET /v1/insights?days=30&min_requests=20
+- GET /v1/insights?days=7|30|90&min_requests=20
 - GET /v1/facets
 - GET /v1/sessions?limit=100
 - GET /v1/sessions/{session-id}
@@ -93,7 +93,7 @@ Endpoints:
 
 ## Management UI and faceted search
 
-The dark Insights view is the default landing page. It shows request, session, turn, and model totals, UTC daily requests by provider, and per-model request counts, sessions, steps per turn, latency, failure rate, and cancel rate for 7, 30, or 90 days. Imported histories are excluded. Model charts require at least 20 requests, while totals include all models. The collector caches each window for five minutes. The Sessions tab opens the existing archive browser.
+The dark Insights view is the default landing page. It shows request, session, turn, and model totals, UTC daily requests by provider, and per-model request counts, sessions, steps per turn, latency, failure rate, and cancel rate for 7, 30, or 90 days. Imported histories are excluded. Model charts require at least 20 requests, while totals include all models. One background scan builds all three windows; the collector serves that snapshot for five minutes and answers `202 building` until the first scan finishes. The Sessions tab opens the existing archive browser.
 
 With CPA management API support enabled, CPA-Manager-Plus shows a session archive plugin page. The page provides storage statistics, dynamic facet selectors and routed session, turn, request, tool-call, and raw-diagnostic views. A session first shows only each user command and the corresponding final/latest natural-language response. Expanding a turn reveals intermediate assistant explanations, compaction points, and compact tool summaries; opening a tool summary is the third level that materializes its complete arguments and result. Both the turn index and long internal-request sequences are paginated. System instructions, raw diagnostics, tool bodies, and long fields are materialized only after a click, so a large coding session does not freeze the page.
 

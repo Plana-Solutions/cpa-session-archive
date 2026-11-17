@@ -69,3 +69,17 @@ test("leaving insights mid-build does not yank the sessions view", async ({ page
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await expect(page.locator("#insightsView")).toBeHidden();
 });
+
+test("leaving a cold initial insights load does not yank the sessions view", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await page.route("**/plugins/cpa-session-archive/insights**", route =>
+    route.fulfill({ status: 202, contentType: "application/json", body: '{"status":"building"}' }));
+  await page.reload();
+  await expect(page.locator(".insights-status")).toBeVisible();
+  await page.locator("#sessionsTab").click();
+  await expect(page.locator(".key-pill")).toBeVisible();
+  await page.locator("#filterSidebar > summary").click();
+  await page.evaluate(() => window.scrollTo(0, 300));
+  await page.waitForTimeout(2600);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+});

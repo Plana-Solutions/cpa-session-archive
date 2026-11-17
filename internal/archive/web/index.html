@@ -1903,8 +1903,8 @@
             })
             .join("");
           renderFilters();
-          await route();
           window.scrollTo(0, 0);
+          await route();
         } catch (e) {
           document.getElementById("login").style.display = "grid";
           document.getElementById("loginError").textContent = t("loginFailed", {

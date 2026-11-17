@@ -35,10 +35,14 @@ func TestInsightsWindowAndMetrics(t *testing.T) {
 		}
 	}
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	got, err := store.Insights(context.Background(), 3, now)
+	windows, err := store.Insights(context.Background(), []int{3, 1}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if day := windows[1]; day.Totals.Requests != 5 || len(day.Daily) != 1 || day.From != "2026-11-18T00:00:00Z" {
+		t.Fatalf("1-day window from the same scan = %+v", day.Totals)
+	}
+	got := windows[3]
 	if got.Totals != (InsightTotals{Requests: 7, Sessions: 3, Turns: 3, Models: 3}) {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
@@ -80,17 +84,18 @@ func TestInsightsTurnsAreScopedToSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.DB.Close()
-	for i, session := range []string{"a", "b"} {
-		_, err := store.DB.Exec(`INSERT INTO turn_records(request_id,model,session_id,turn_id,outcome,started_at) VALUES(?,?,?,?,?,?)`, fmt.Sprint(i), "claude-opus", session, "same-turn", "succeeded", "2026-11-18T01:00:00Z")
+	for i, pair := range [][2]string{{"a", "same-turn"}, {"b", "same-turn"}, {"x", "y\x00z"}, {"x\x00y", "z"}} {
+		_, err := store.DB.Exec(`INSERT INTO turn_records(request_id,model,session_id,turn_id,outcome,started_at) VALUES(?,?,?,?,?,?)`, fmt.Sprint(i), "claude-opus", pair[0], pair[1], "succeeded", "2026-11-18T01:00:00Z")
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, err := store.Insights(context.Background(), 1, time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC))
+	windows, err := store.Insights(context.Background(), []int{1}, time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Totals.Turns != 2 || got.Models[0].Turns != 2 || got.Models[0].StepsPerTurn != 1 {
+	got := windows[1]
+	if got.Totals.Turns != 4 || got.Models[0].Turns != 4 || got.Models[0].StepsPerTurn != 1 {
 		t.Fatalf("turn ids reused across sessions merged: %+v %+v", got.Totals, got.Models)
 	}
 }
