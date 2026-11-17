@@ -370,3 +370,8 @@ test("a late session page cannot wipe the open turn's expandable text", async ({
   await answer.getByRole("button", { name: "展开完整内容" }).click();
   await expect(answer).toContainText("END-OF-COMPLETE-ASSISTANT-ANSWER");
 });
+
+test("a session deep link with a trailing slash still renders its turns", async ({ page }) => {
+  await page.goto("/#/sessions/mock-session-long-content/");
+  await expect(page.locator(".turn-card").first()).toBeVisible();
+});

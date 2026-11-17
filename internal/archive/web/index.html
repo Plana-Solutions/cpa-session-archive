@@ -2335,7 +2335,7 @@
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
-        var request = ++sessionPageRequest, sessionHash = "#/sessions/" + encodeURIComponent(detailSessionID);
+        var request = ++sessionPageRequest;
         var baseOffset = (detailPage - 1) * detailPageSize;
         var order = document.getElementById("sessionOrder").value || "desc";
         var page = await api(
@@ -2350,7 +2350,8 @@
           t("loadingTurns"),
           sqlTemplates.session,
         );
-        if (request !== sessionPageRequest || location.hash !== sessionHash) return;
+        var current = routePath();
+        if (request !== sessionPageRequest || current.length !== 2 || current[0] !== "sessions" || current[1] !== detailSessionID) return;
         fullTexts = {};
         detailTotal = page.total;
         detailRecords = page.turns || [];
@@ -3652,17 +3653,20 @@
       function closeDrawer() {
         goSessions();
       }
+      function routePath() {
+        return (location.hash || "#/insights")
+          .replace(/^#\/?/, "")
+          .split("/")
+          .filter(Boolean)
+          .map(decodeURIComponent);
+      }
       async function route() {
         if (
           !session ||
           document.getElementById("login").style.display !== "none"
         )
           return;
-        var path = (location.hash || "#/insights")
-          .replace(/^#\/?/, "")
-          .split("/")
-          .filter(Boolean)
-          .map(decodeURIComponent);
+        var path = routePath();
         var isInsights = !path.length || path[0] === "insights";
         document.getElementById("insightsView").hidden = !isInsights;
         document.getElementById("insightsTab").toggleAttribute("aria-current", isInsights);
