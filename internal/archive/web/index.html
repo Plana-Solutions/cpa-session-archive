@@ -1043,7 +1043,7 @@
               <div id="filters" class="facet-groups"></div>
               <div class="filter-actions">
                 <label><span data-i18n="limit"></span><input id="limit" type="number" value="100" min="1" max="1000" /></label>
-                <button class="primary" data-i18n="apply" onclick="loadSessions();closeFilters()"></button>
+                <button class="primary" data-i18n="apply" onclick="applyFilters();closeFilters()"></button>
                 <button data-i18n="reset" onclick="resetFilters()"></button>
               </div>
             </div>
@@ -1685,9 +1685,8 @@
         return svg + '</svg>';
       }
       function filterInsightModel(index) {
-        document.querySelectorAll("[data-facet]").forEach(function (node) {
-          node.value = node.dataset.facet === "model.resolved" ? insightsData.models[index].model : "";
-        });
+        appliedFacets = {"model.resolved": insightsData.models[index].model};
+        writeFacetControls();
         updateActiveFilters();
       }
       window.addEventListener("resize", function () {
@@ -2166,6 +2165,7 @@
             );
           })
           .join("");
+        writeFacetControls();
         updateActiveFilters();
       }
       function filterFacetNames() {
@@ -2187,17 +2187,29 @@
           if (q && visible) x.open = true;
         });
       }
+      var appliedFacets = {};
+      function facetControls() {
+        return Array.from(document.querySelectorAll("[data-facet]"));
+      }
+      function writeFacetControls() {
+        facetControls().forEach(function (node) {
+          node.value = appliedFacets[node.dataset.facet] || "";
+        });
+      }
+      function applyFilters() {
+        appliedFacets = {};
+        facetControls().forEach(function (node) {
+          if (node.value) appliedFacets[node.dataset.facet] = node.value;
+        });
+        return loadSessions();
+      }
       function updateActiveFilters() {
-        var active = [];
-        document.querySelectorAll("[data-facet]").forEach(function (x) {
-          if (x.value)
-            active.push(
-              '<button class="chip" data-remove-facet="' + esc(x.dataset.facet) + '" aria-label="' + esc(t('removeFilter', {name: facetLabel(x.dataset.facet)})) + '" onclick="removeFacet(this.dataset.removeFacet)">' +
-                esc(facetLabel(x.dataset.facet)) +
-                ": " +
-                esc(facetValueLabel(x.dataset.facet, x.value)) +
-                " ×</button>",
-            );
+        var active = Object.keys(appliedFacets).map(function (name) {
+          return '<button class="chip" data-remove-facet="' + esc(name) + '" aria-label="' + esc(t('removeFilter', {name: facetLabel(name)})) + '" onclick="removeFacet(this.dataset.removeFacet)">' +
+            esc(facetLabel(name)) +
+            ": " +
+            esc(facetValueLabel(name, appliedFacets[name])) +
+            " ×</button>";
         });
         document.getElementById("activeFilters").innerHTML = active.length
           ? active.join("")
@@ -2206,8 +2218,8 @@
       }
       async function loadSessions() {
         var q = new URLSearchParams();
-        document.querySelectorAll("[data-facet]").forEach(function (node) {
-          if (node.value) q.set(node.dataset.facet, node.value);
+        Object.keys(appliedFacets).forEach(function (name) {
+          q.set(name, appliedFacets[name]);
         });
         q.set("limit", document.getElementById("limit").value || 100);
         var rows = await api(
@@ -2225,6 +2237,7 @@
       function closeFilters() {
         var panel = document.getElementById("filterSidebar");
         if (!panel.open) return;
+        writeFacetControls();
         panel.open = false;
         panel.querySelector("summary").focus();
       }
@@ -2232,10 +2245,8 @@
         if (event.key === "Escape") closeFilters();
       });
       function removeFacet(name) {
-        var select = Array.from(document.querySelectorAll("[data-facet]")).find(function (node) {
-          return node.dataset.facet === name;
-        });
-        select.value = "";
+        delete appliedFacets[name];
+        writeFacetControls();
         updateActiveFilters();
         loadSessions();
       }
@@ -2257,7 +2268,7 @@
       }
       function renderSessionRows() {
         var rows = sessionList.loaded.filter(function (row) {
-          return displayText([row.summary, row.project, row.model, row.session_id].join(" ")).toLocaleLowerCase().includes(sessionList.query);
+          return [titleText(row.summary), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
         });
         document.getElementById("resultCount").textContent = t("loadedCount", {
           shown: insightNumber(rows.length, 0), loaded: insightNumber(sessionList.loaded.length, 0),
@@ -2279,9 +2290,8 @@
         }).join("") : '<div class="empty">' + esc(t(sessionList.query ? "noSearchResults" : "empty")) + '</div>';
       }
       function resetFilters() {
-        document.querySelectorAll("[data-facet]").forEach(function (x) {
-          x.value = "";
-        });
+        appliedFacets = {};
+        writeFacetControls();
         document.getElementById("facetSearch").value = "";
         filterFacetNames();
         loadSessions();
@@ -2321,6 +2331,7 @@
       }
       async function loadSessionPage(pageNumber) {
         detailPage = Math.max(1, pageNumber || detailPage || 1);
+        fullTexts = {};
         var baseOffset = (detailPage - 1) * detailPageSize;
         var order = document.getElementById("sessionOrder").value || "desc";
         var page = await api(
@@ -2382,11 +2393,11 @@
         return new Date(value).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-US", {hour: "numeric", minute: "2-digit"});
       }
       function renderTurnSummary(turn, number) {
-        return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + encodeURIComponent(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
+        return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
           esc(t("userRole")) + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
           renderExpandableTurnText(turn.final_text || t("noFinalAnswer"), !turn.final_text, true) +
           '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
-          '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + encodeURIComponent(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
+          '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
       }
       function openTurn(id) {
         location.hash =
@@ -2473,7 +2484,7 @@
           '<details class="panel process-step" data-request-id="' +
           esc(view.request_id) +
           '" ontoggle="loadTurnProcess(this,decodeURIComponent(\'' +
-          encodeURIComponent(view.request_id) +
+          jsId(view.request_id) +
           '\'))"><summary><b>' +
           esc(t("processStep", { number: number })) +
           " · " +
@@ -2551,9 +2562,9 @@
             var tool = tools[id];
             return (
               '<button class="tool-summary" onclick="event.stopPropagation();openTurnTool(decodeURIComponent(\'' +
-              encodeURIComponent(view.request_id) +
+              jsId(view.request_id) +
               "'),decodeURIComponent('" +
-              encodeURIComponent(tool.id) +
+              jsId(tool.id) +
               "'))\">" +
               esc(tool.name) +
               " · " +
@@ -2576,7 +2587,7 @@
         return (
           body +
           "<button onclick=\"openTurnRequest(decodeURIComponent('" +
-          encodeURIComponent(view.request_id) +
+          jsId(view.request_id) +
           "'))\">" +
           esc(t("rawDiagnostics")) +
           "</button>"
@@ -2956,14 +2967,19 @@
           "</article>"
         );
       }
+      function jsId(value) {
+        return encodeURIComponent(String(value == null ? "" : value)).replace(/[!'()*]/g, function (c) {
+          return "%" + c.charCodeAt(0).toString(16).toUpperCase();
+        });
+      }
       function renderMarkdown(text) {
         var lines = esc(text).replace(/\r\n?/g, "\n").split("\n"), blocks = [], paragraph = [], list = "", code = null;
         function inline(value) {
-          return value.replace(/`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g, function (match, mono, label, url, bold, italic) {
+          return value.replace(/`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>()]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g, function (match, mono, label, url, bold, italic) {
             if (mono) return "<code>" + mono + "</code>";
             if (label) return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' + label + "</a>";
-            if (bold) return "<strong>" + bold + "</strong>";
-            return "<em>" + italic + "</em>";
+            if (bold) return "<strong>" + inline(bold) + "</strong>";
+            return "<em>" + inline(italic) + "</em>";
           });
         }
         function flush() {

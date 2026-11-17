@@ -174,8 +174,9 @@ test("facets, i18n, deep links, and back navigation remain interactive", async (
   await page.locator('[data-facet="project.name"]').selectOption(
     "mock-long-project",
   );
-  await expect(page.locator("#activeCount")).toHaveText("1");
+  await expect(page.locator("#activeCount")).toHaveText("0");
   await page.getByRole("button", { name: "应用筛选" }).click();
+  await expect(page.locator("#activeCount")).toHaveText("1");
   await expect(page.locator(".session-row")).toHaveCount(1);
   await expect(page.locator("[data-remove-facet]")).toContainText("mock-long-project");
   await page.locator("[data-remove-facet]").click();
@@ -293,4 +294,49 @@ test("markdown preserves prose structure, safe links and literal code after expa
   await answer.getByRole("button", {name:"展开完整内容"}).click();
   await expect(answer.locator(".full-content strong")).toHaveText("bold");
   await expect(answer.locator(".full-content")).toContainText("END-OF-COMPLETE-ASSISTANT-ANSWER");
+});
+
+test("unapplied filter choices never become chips or queries", async ({ page }) => {
+  const queries = [];
+  page.on("request", request => { if (request.url().includes("/sessions?")) queries.push(request.url()); });
+  const panel = page.locator("#filterSidebar");
+  const select = page.locator('[data-facet="project.name"]');
+  const value = "mock-long-project";
+  await panel.locator(":scope > summary").click();
+  await page.locator("#facetSearch").fill("project");
+  await select.selectOption(value);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#activeFilters .chip")).toHaveCount(0);
+  await expect(select).toHaveValue("");
+  await page.locator(".session-row").first().click();
+  await page.goBack();
+  await expect(page.locator(".session-row").first()).toBeVisible();
+  const facet = await select.getAttribute("data-facet");
+  expect(queries.some(url => new URL(url).searchParams.has(facet))).toBe(false);
+  await panel.locator(":scope > summary").click();
+  await page.locator("#facetSearch").fill("project");
+  await select.selectOption(value);
+  await page.locator(".filter-panel button.primary").click();
+  await expect(page.locator("#activeFilters .chip")).toHaveCount(1);
+  await page.locator("#activeFilters .chip").click();
+  await expect(page.locator("#activeFilters .chip")).toHaveCount(0);
+  await expect(select).toHaveValue("");
+});
+
+test("markdown link boundaries and inline handler ids survive hostile input", async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.innerHTML = renderMarkdown("([docs](https://example.com/x)) and **[bold](https://example.com/b)**");
+    const id = "turn's-(id)*!";
+    return {
+      hrefs: [...host.querySelectorAll("a")].map(a => a.getAttribute("href")),
+      boldLink: !!host.querySelector("strong a"),
+      encoded: jsId(id),
+      roundTrip: decodeURIComponent(jsId(id)) === id,
+    };
+  });
+  expect(result.hrefs).toEqual(["https://example.com/x", "https://example.com/b"]);
+  expect(result.boldLink).toBe(true);
+  expect(result.encoded).not.toMatch(/['()*!]/);
+  expect(result.roundTrip).toBe(true);
 });
