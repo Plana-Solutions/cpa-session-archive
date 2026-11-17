@@ -923,6 +923,7 @@
       .route-page { padding: 32px 40px 64px; min-height: calc(100vh - 64px); }
       .route-shell { max-width: 980px; }
       .drawer-head { position: static; padding: 0; margin-bottom: 28px; }
+      #turnTitle { font-size: clamp(22px, 2.2vw, 28px); letter-spacing: -.02em; -webkit-line-clamp: 2; }
       .detail-title { margin: 0 0 20px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
       .meta-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 28px; }
       .meta-chip { border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; font-size: 12px; color: var(--muted); max-width: 100%; overflow-wrap: anywhere; }
@@ -2262,15 +2263,19 @@
           shown: insightNumber(rows.length, 0), loaded: insightNumber(sessionList.loaded.length, 0),
         });
         document.getElementById("rows").innerHTML = rows.length ? rows.map(function (row) {
-          var title = displayText(row.summary || row.project || t("untitled"));
+          var title = titleText(row.summary || row.project);
           var badges = ExternalArchive.badge(row);
           if ((row.thread_sources || []).includes("system")) badges += '<span class="kind-badge">' + esc(t("systemTask")) + '</span>';
           if ((row.kinds || []).length === 1 && row.kinds[0] === "prewarm") badges += '<span class="kind-badge">' + esc(t("kindPrewarm")) + '</span>';
           return '<a class="session-row" href="#/sessions/' + encodeURIComponent(row.session_id) + '"><div class="session-copy"><div class="conversation-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="conversation-meta">' +
-            (row.project ? '<span class="session-project" title="' + esc(row.project) + '">' + esc(row.project) + '</span><span>·</span>' : "") +
-            modelLabel(row.model) + '<span>·</span><span>' + esc(t(row.requests === 1 ? "requestOne" : "requestsCount", {count: insightNumber(row.requests, 0)})) + '</span><span>·</span><time title="' + esc(localTime(row.last_at)) + '">' + esc(relativeTime(row.last_at)) + '</time>' +
+            [
+              row.project ? '<span class="session-project" title="' + esc(row.project) + '">' + esc(row.project) + '</span>' : "",
+              row.model ? modelLabel(row.model) : "",
+              '<span>' + esc(t(row.requests === 1 ? "requestOne" : "requestsCount", {count: insightNumber(row.requests, 0)})) + '</span>',
+              '<time title="' + esc(localTime(row.last_at)) + '">' + esc(relativeTime(row.last_at)) + '</time>',
+            ].filter(Boolean).join('<span>·</span>') +
             (ExternalArchive.provenance(row) ? '<span class="source-provenance">' + esc(ExternalArchive.provenance(row)) + '</span>' : "") + badges +
-            '</div></div><span class="key-pill" title="' + esc(keyName(row.key_id)) + '">' + esc(keyName(row.key_id)) + '</span><span class="row-arrow" aria-hidden="true">›</span></a>';
+            '</div></div>' + (keyAliases[normalizeKeyHash(row.key_id)] ? '<span class="key-pill" title="' + esc(keyName(row.key_id)) + '">' + esc(keyName(row.key_id)) + '</span>' : '') + '<span class="row-arrow" aria-hidden="true">›</span></a>';
         }).join("") : '<div class="empty">' + esc(t(sessionList.query ? "noSearchResults" : "empty")) + '</div>';
       }
       function resetFilters() {
@@ -2294,8 +2299,8 @@
         detailSeenContent = new Set();
         document.getElementById("detail").innerHTML = "";
         document.getElementById("externalSources").innerHTML = "";
-        document.getElementById("detailTitle").textContent = displayText(
-          selected.summary || selected.project || t("untitled"),
+        document.getElementById("detailTitle").textContent = titleText(
+          selected.summary || selected.project,
         );
         document.getElementById("detailMeta").textContent = [
           keyName(selected.key_id),
@@ -2335,7 +2340,7 @@
         if (detailRecords[0]) {
           var first = detailRecords[0];
           var selected = sessionsByID[detailSessionID] || {};
-          document.getElementById("detailTitle").textContent = displayText(
+          document.getElementById("detailTitle").textContent = titleText(
             selected.summary ||
               first.user_text ||
               selected.project ||
@@ -2421,10 +2426,10 @@
         );
         var turn = page.turn || {};
         turnProcessTotal = page.total || 0;
-        var titleText = displayText(turn.user_text || t("untitled"));
+        var turnTitle = titleText(turn.user_text);
         document.getElementById("turnTitle").textContent =
-          titleText.length > 100 ? titleText.slice(0, 100) + "…" : titleText;
-        document.getElementById("turnTitle").title = titleText;
+          turnTitle.length > 100 ? turnTitle.slice(0, 100) + "…" : turnTitle;
+        document.getElementById("turnTitle").title = turnTitle;
         document.getElementById("turnMeta").innerHTML = renderMetaChips([
           modelLabel(turn.model), esc(localTime(turn.last_at)), esc(keyName(turn.key_id)),
         ]);
@@ -3813,6 +3818,10 @@
           value = decoded;
         }
         try { return decodeURIComponent(value); } catch (ignore) { return value; }
+      }
+      function titleText(x) {
+        var text = displayText(x).replace(/<\/?[A-Za-z_][\w.-]*(\s[^<>]*)?>/g, " ").replace(/\s+/g, " ").trim();
+        return text || t("untitled");
       }
       function esc(x) {
         return displayText(x).replace(/[&<>"']/g, function (c) {
