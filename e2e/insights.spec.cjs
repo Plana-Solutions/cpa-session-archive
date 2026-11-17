@@ -13,12 +13,14 @@ test("insights is the default route and window changes refetch the fleet", async
   await expect(page.locator("#insightsView")).toBeVisible();
   await expect(page.locator("#listView")).toBeHidden();
   await expect(page.locator("#insightsTab")).toHaveAttribute("aria-current", "page");
-  await expect(page.locator(".kpi-number")).toHaveText(["33,020", "1,340", "5,356", "6"]);
+  await expect(page.locator(".kpi-number")).toHaveText(["33,020", "1,099", "4,384", "6"]);
   await expect(page.locator(".metric-chart")).toHaveCount(6);
   const claude = page.locator('[data-metric="requests"] [data-model="claude-opus-5-5"]');
   await expect(claude).toHaveClass(/provider-anthropic/);
   await expect(claude.locator(".model-bar")).toHaveCSS("background-color", "rgb(217, 119, 87)");
   await expect(page.locator(".daily-chart rect")).toHaveCount(120);
+  await expect(page.locator('[data-metric="requests"] [data-model="claude-sonnet-5-5"]')).toBeVisible();
+  await expect(page.locator('[data-metric="steps_per_turn"] [data-model="claude-sonnet-5-5"]')).toHaveCount(0);
   const refetch = page.waitForRequest(request => {
     const url = new URL(request.url());
     return url.pathname.endsWith("/insights") && url.searchParams.get("days") === "7";

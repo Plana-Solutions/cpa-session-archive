@@ -179,9 +179,9 @@ const server = http.createServer((request, response) => {
       ["kimi-k3", "other", 640, 16.3, .056, .022],
     ].map(([model, provider, base, latency, failure, cancel], index) => {
       const requests = Math.round(base * days / 30);
-      const turns = Math.round(requests / (7.4 - index * .8));
-      return { model, provider, requests, sessions: Math.round(turns / 4), turns,
-        steps_per_turn: requests / turns, avg_latency_seconds: latency, failure_rate: failure, cancel_rate: cancel };
+      const turns = model === "claude-sonnet-5-5" ? 0 : Math.round(requests / (7.4 - index * .8));
+      return { model, provider, requests, sessions: Math.max(1, Math.round(requests / 30)), turns,
+        steps_per_turn: turns ? requests / turns : 0, avg_latency_seconds: latency, failure_rate: failure, cancel_rate: cancel };
     });
     const daily = Array.from({ length: days }, (_, index) => {
       const date = new Date(from); date.setUTCDate(date.getUTCDate() + index);

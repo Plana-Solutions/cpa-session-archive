@@ -1090,7 +1090,7 @@
           metricLatency: "平均延迟（秒）", metricFailure: "失败率（%）", metricCancel: "取消率（%）",
           providerAnthropic: "Anthropic", providerOpenai: "OpenAI", providerGoogle: "Google", providerOther: "其他",
           insightsEmpty: "此时间范围内没有请求。", modelsEmpty: "此时间范围内没有模型达到 20 次请求。",
-          insightsFootnote: "请求数为模型调用次数，会话数为不同会话标识数。每回合步骤数为请求数除以不同的非空回合标识数。平均延迟仅统计成功请求从开始到完成的时间。失败率包含失败和拒绝请求，取消率统计已取消请求，分母均为全部请求。日期按 UTC 统计，含今天。图表仅展示至少 20 次请求的模型，汇总包含全部模型。外部导入历史不计入统计。",
+          insightsFootnote: "请求数为模型调用次数，会话数为不同会话标识数。每回合步骤数为请求数除以不同的非空回合标识数，仅包含客户端发送回合标识的模型。平均延迟仅统计成功请求从开始到完成的时间。失败率包含失败和拒绝请求，取消率统计已取消请求，分母均为全部请求。日期按 UTC 统计，含今天。图表仅展示至少 20 次请求的模型，汇总包含全部模型。外部导入历史不计入统计。",
           title: "会话归档",
           subtitle:
             "按项目、代码库、客户端工具、会话、模型、工具调用、认证与结果等元信息组合筛选。",
@@ -1242,7 +1242,7 @@
           metricLatency: "Avg latency (s)", metricFailure: "Failure rate (%)", metricCancel: "Cancel rate (%)",
           providerAnthropic: "Anthropic", providerOpenai: "OpenAI", providerGoogle: "Google", providerOther: "Other",
           insightsEmpty: "No requests in this window.", modelsEmpty: "No models with at least 20 requests in this window.",
-          insightsFootnote: "Requests count model calls. Sessions count distinct session identifiers. Steps per turn is requests divided by distinct non-empty turn identifiers. Average latency measures start to completion for successful requests only. Failure rate includes failed and rejected requests. Cancel rate counts canceled requests. Both rates divide by all requests. Days use UTC and include today. Charts show models with at least 20 requests; totals include every model. Imported histories are excluded.",
+          insightsFootnote: "Requests count model calls. Sessions count distinct session identifiers. Steps per turn is requests divided by distinct non-empty turn identifiers, and only covers models whose clients send turn identifiers. Average latency measures start to completion for successful requests only. Failure rate includes failed and rejected requests. Cancel rate counts canceled requests. Both rates divide by all requests. Days use UTC and include today. Charts show models with at least 20 requests; totals include every model. Imported histories are excluded.",
           title: "Session Archive",
           subtitle:
             "Combine project, repository, client, session, model, tool, authentication and outcome metadata to find archived coding sessions.",
@@ -1426,7 +1426,7 @@
       var insightMetrics = [
         { key: "requests", label: "metricRequests", digits: 0 },
         { key: "sessions", label: "metricSessions", digits: 0 },
-        { key: "steps_per_turn", label: "metricSteps", digits: 1 },
+        { key: "steps_per_turn", label: "metricSteps", digits: 1, needsTurns: true },
         { key: "avg_latency_seconds", label: "metricLatency", digits: 1 },
         { key: "failure_rate", label: "metricFailure", digits: 1, percent: true },
         { key: "cancel_rate", label: "metricCancel", digits: 1, percent: true },
@@ -1481,10 +1481,12 @@
         html += renderDailyChart(data.daily) + (totals.requests ? '' : '<p class="muted">' + esc(t("insightsEmpty")) + '</p>') + '</section>';
         html += '<section class="model-section" aria-labelledby="modelsTitle"><h2 id="modelsTitle">' + esc(t("modelBehavior")) + '</h2>';
         html += data.models.length ? '<div class="model-grid">' + insightMetrics.map(function (metric) {
-          var models = data.models.slice().sort(function (a, b) {
+          var models = data.models.filter(function (model) {
+            return !metric.needsTurns || model.turns > 0;
+          }).sort(function (a, b) {
             return b[metric.key] - a[metric.key] || a.model.localeCompare(b.model);
           });
-          var max = models[0][metric.key];
+          var max = models.length ? models[0][metric.key] : 0;
           return '<section class="metric-chart" data-metric="' + metric.key + '"><h3>' + esc(t(metric.label)) + '</h3>' + models.map(function (model) {
             var provider = insightProviders.find(function (p) { return p.id === model.provider; }) || insightProviders[3];
             var value = model[metric.key];
