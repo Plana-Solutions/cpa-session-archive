@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -293,8 +293,65 @@
         display: grid;
         place-items: center;
       }
-      .login > div {
-        width: min(420px, calc(100vw - 40px));
+      .login-card {
+        width: min(440px, calc(100vw - 32px));
+        display: grid;
+        gap: 18px;
+      }
+      .login-brand {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: .02em;
+      }
+      .login-card h1 {
+        margin: 0;
+        font-size: clamp(28px, 6vw, 38px);
+        font-weight: 650;
+        letter-spacing: -.035em;
+        line-height: 1.1;
+      }
+      .login-hint {
+        margin: -6px 0 10px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .login-field {
+        display: grid;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .login-field input {
+        width: 100%;
+        height: 44px;
+        padding: 0 14px;
+        font-size: 15px;
+        font-weight: 400;
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      .login-field input:focus {
+        outline: none;
+        border-color: var(--muted);
+      }
+      .login-submit {
+        height: 44px;
+        margin-top: 6px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--text);
+        color: var(--bg);
+        font-weight: 650;
+        cursor: pointer;
+      }
+      .login-submit:hover {
+        background: #fff;
+        color: var(--bg);
+      }
+      .login-card .error:empty {
+        display: none;
       }
       .facet-more {
         max-height: 220px;
@@ -735,11 +792,6 @@
       .status-error {
         color: var(--danger);
       }
-      .login input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 8px;
-      }
       @media (max-width: 900px) {
         .app-layout {
           grid-template-columns: 1fr;
@@ -845,7 +897,6 @@
         .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
         .card { min-width: 0; padding-right: 4px; }
         .num { font-size: 22px; }
-        .login > div { padding: 20px 0; }
         .technical-meta dl { grid-template-columns: 1fr; }
         .technical-meta dd { margin-bottom: 8px; }
         .diagnostic-grid, .tool-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1058,19 +1109,15 @@
       </div>
     </div>
     <div id="login" class="login">
-      <div class="panel">
-        <h2 data-i18n="connectTitle"></h2>
-        <label
-          ><span data-i18n="apiBase"></span><input id="base" value="" /></label
-        ><br />
-        <label
-          ><span data-i18n="managementKey"></span
-          ><input id="key" type="password" /></label
-        ><br />
-        <button data-i18n="login" onclick="manualLogin()"></button>
-        <p id="loginError" class="error"></p>
-        <p class="muted" data-i18n="loginHint"></p>
-      </div>
+      <form class="login-card" onsubmit="event.preventDefault(); manualLogin()">
+        <p class="login-brand" data-i18n="title"></p>
+        <h1 data-i18n="connectTitle"></h1>
+        <p class="login-hint" data-i18n="loginHint"></p>
+        <label class="login-field"><span data-i18n="apiBase"></span><input id="base" value="" autocomplete="url" spellcheck="false" /></label>
+        <label class="login-field"><span data-i18n="managementKey"></span><input id="key" type="password" autocomplete="current-password" /></label>
+        <button class="login-submit" type="submit" data-i18n="login"></button>
+        <p id="loginError" class="error" role="alert"></p>
+      </form>
     </div>
     <script src="external.js"></script>
     <script>
@@ -1134,12 +1181,12 @@
           importedSources: "导入的原始文件",
           untitled: "未命名会话",
           storageUsed: "实际存储占用",
-          connectTitle: "连接 CPA 管理 API",
-          apiBase: "API Base",
-          managementKey: "Management Key",
+          connectTitle: "连接 CPA",
+          apiBase: "API 地址",
+          managementKey: "管理密钥",
           login: "登录",
           loginHint:
-            "若宿主面板勾选了“记住凭证”，本页会自动复用。Manager Server 模式也可在此输入 cpamp_ 管理员 Key；凭证只保存在本页内存中。",
+            "在 CPAMP 中打开时会自动登录。单独打开时，请输入 API 地址和管理员密钥，密钥只保存在本页内存中。",
           loginFailed:
             "连接失败（HTTP {status}）。请确认 API Base 与当前面板一致，并使用当前面板的管理员 Key。",
           records: "记录",
@@ -1289,12 +1336,12 @@
           importedSources: "Imported sources",
           untitled: "Untitled session",
           storageUsed: "Storage used",
-          connectTitle: "Connect to the CPA management API",
-          apiBase: "API Base",
-          managementKey: "Management Key",
+          connectTitle: "Connect to CPA",
+          apiBase: "API base URL",
+          managementKey: "Management key",
           login: "Sign in",
           loginHint:
-            "When the host panel remembers credentials, this page reuses them automatically. In Manager Server mode, you can enter the cpamp_ admin key here; it stays in this page's memory only.",
+            "Inside CPAMP you're signed in automatically. Opened on its own, it needs the API URL and an admin key, which stays in this page's memory only.",
           loginFailed:
             "Connection failed (HTTP {status}). Ensure API Base matches the current panel and use its current administrator key.",
           records: "Records",
