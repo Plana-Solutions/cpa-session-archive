@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,8 +46,10 @@ func TestInsightsBuildInBackgroundThenServeCache(t *testing.T) {
 		return archive.Insights{}
 	}
 
-	if code, raw, _ := call("GET", ""); code != 202 || raw["status"] != "building" {
-		t.Fatalf("cold request = %d %v, want 202 building", code, raw)
+	cold := httptest.NewRecorder()
+	s.insights(cold, httptest.NewRequest("GET", "/v1/insights", nil))
+	if cold.Code != 202 || cold.Header().Get("Content-Type") != "application/json" || !strings.Contains(cold.Body.String(), `"building"`) {
+		t.Fatalf("cold request = %d %q %s, want 202 JSON building", cold.Code, cold.Header().Get("Content-Type"), cold.Body.String())
 	}
 	first := ready("")
 	if first.WindowDays != 30 || len(first.Models) != 0 || first.Totals.Requests != 1 {
@@ -77,6 +80,32 @@ func TestInsightsBuildInBackgroundThenServeCache(t *testing.T) {
 			t.Fatal("stale cache never refreshed")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	s.insightsMu.Lock()
+	s.insightsCache[30].value.GeneratedAt = time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339Nano)
+	s.insightsMu.Unlock()
+	if code, raw, _ := call("GET", "?days=30"); code != 202 || raw["status"] != "building" {
+		t.Fatalf("yesterday's window must not be served: %d %v", code, raw)
+	}
+	ready("?days=30")
+
+	s.insightsMu.Lock()
+	s.insightsScanning = true
+	s.insightsMu.Unlock()
+	if code, _, _ := call("GET", "?days=90"); code != 202 {
+		t.Fatalf("cold window while another scan runs = %d, want 202", code)
+	}
+	s.insightsMu.Lock()
+	started := s.insightsCache[90].ready
+	s.insightsScanning = false
+	s.insightsMu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	s.insightsMu.Lock()
+	started = started || s.insightsCache[90].ready
+	s.insightsMu.Unlock()
+	if started {
+		t.Fatal("a second scan started while one was running")
 	}
 
 	if out := ready("?days=0"); out.WindowDays != 1 || len(out.Daily) != 1 {

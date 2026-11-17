@@ -29,7 +29,7 @@ const longToolOutput =
   "TOOL-OUTPUT-LINE\n".repeat(7000) +
   "END-OF-LONG-TOOL-OUTPUT";
 let turnTextPolls = 0;
-let insightsBuilt7 = false;
+const insightsBuilt = new Set();
 const originalRequest = {
   model: "gpt-5.6-sol",
   instructions: longSystem,
@@ -161,8 +161,9 @@ const server = http.createServer((request, response) => {
   }
   const prefix = "/v0/management/plugins/cpa-session-archive";
   if (url.pathname === prefix + "/insights") {
-    if (url.searchParams.get("days") === "7" && !insightsBuilt7) {
-      insightsBuilt7 = true;
+    const window = url.searchParams.get("days");
+    if ((window === "7" || window === "90") && !insightsBuilt.has(window)) {
+      insightsBuilt.add(window);
       return json(response, { status: "building" });
     }
     const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days")) || 30));

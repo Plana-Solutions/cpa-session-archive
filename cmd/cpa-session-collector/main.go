@@ -17,14 +17,15 @@ import (
 )
 
 type server struct {
-	insightsMu    sync.Mutex
-	insightsCache map[int]*insightsEntry
-	s             *archive.Store
-	q             chan archive.Record
-	ticketMu      sync.Mutex
-	tickets       map[string]exportTicket
-	turnTextMu    sync.Mutex
-	turnTextJobs  map[string]bool
+	insightsMu       sync.Mutex
+	insightsCache    map[int]*insightsEntry
+	insightsScanning bool
+	s                *archive.Store
+	q                chan archive.Record
+	ticketMu         sync.Mutex
+	tickets          map[string]exportTicket
+	turnTextMu       sync.Mutex
+	turnTextJobs     map[string]bool
 }
 
 type exportTicket struct {

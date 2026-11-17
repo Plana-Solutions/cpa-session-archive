@@ -3557,6 +3557,7 @@
           await loadInsights();
           return;
         }
+        insightsRequest++;
         if (path[0] !== "sessions") {
           location.hash = "#/insights";
           return;
@@ -3698,9 +3699,8 @@
         document.getElementById("base").value = location.origin;
       }
       window.addEventListener("hashchange", function () {
-        route().then(function () {
-          window.scrollTo(0, 0);
-        }).catch(function (e) {
+        window.scrollTo(0, 0);
+        route().catch(function (e) {
           console.error(e);
           hideLoading();
         });

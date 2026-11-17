@@ -73,3 +73,24 @@ func TestModelProviderRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestInsightsTurnsAreScopedToSessions(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "archive.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.DB.Close()
+	for i, session := range []string{"a", "b"} {
+		_, err := store.DB.Exec(`INSERT INTO turn_records(request_id,model,session_id,turn_id,outcome,started_at) VALUES(?,?,?,?,?,?)`, fmt.Sprint(i), "claude-opus", session, "same-turn", "succeeded", "2026-11-18T01:00:00Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.Insights(context.Background(), 1, time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals.Turns != 2 || got.Models[0].Turns != 2 || got.Models[0].StepsPerTurn != 1 {
+		t.Fatalf("turn ids reused across sessions merged: %+v %+v", got.Totals, got.Models)
+	}
+}

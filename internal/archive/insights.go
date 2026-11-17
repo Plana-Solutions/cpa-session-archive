@@ -119,8 +119,9 @@ func (s *Store) Insights(ctx context.Context, days int, now time.Time) (Insights
 		m.sessions[session] = struct{}{}
 		sessions[session] = struct{}{}
 		if turn != "" {
-			m.turns[turn] = struct{}{}
-			turns[turn] = struct{}{}
+			key := session + "\x00" + turn
+			m.turns[key] = struct{}{}
+			turns[key] = struct{}{}
 		}
 		switch outcome {
 		case "succeeded":

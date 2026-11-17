@@ -52,3 +52,20 @@ test("mobile insights stays within the viewport", async ({ page }) => {
   await expect(filters).toHaveAttribute("open", "");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("leaving insights mid-build does not yank the sessions view", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await expect(page.locator(".metric-chart")).toHaveCount(6);
+  await page.locator("#sessionsTab").click();
+  await expect(page.locator(".key-pill")).toBeVisible();
+  await page.evaluate(() => { document.getElementById("insightsDays").value = "90"; });
+  await page.locator("#insightsTab").click();
+  await expect(page.locator(".insights-status")).toBeVisible();
+  await page.locator("#sessionsTab").click();
+  await expect(page.locator(".key-pill")).toBeVisible();
+  await page.locator("#filterSidebar > summary").click();
+  await page.evaluate(() => window.scrollTo(0, 300));
+  await page.waitForTimeout(2600);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(page.locator("#insightsView")).toBeHidden();
+});

@@ -13,9 +13,8 @@ import (
 const insightsTTL = 5 * time.Minute
 
 type insightsEntry struct {
-	value    archive.Insights
-	ready    bool
-	building bool
+	value archive.Insights
+	ready bool
 }
 
 // A cold scan of turn_records takes minutes on the production volume while the
@@ -39,6 +38,7 @@ func (s *server) insights(w http.ResponseWriter, r *http.Request) {
 
 	cached, ready := s.cachedInsights(days, time.Now().UTC())
 	if !ready {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, map[string]any{"status": "building"})
 		return
@@ -65,19 +65,24 @@ func (s *server) cachedInsights(days int, now time.Time) (archive.Insights, bool
 		s.insightsCache[days] = entry
 	}
 	generated, _ := time.Parse(time.RFC3339Nano, entry.value.GeneratedAt)
-	stale := !entry.ready || now.Sub(generated) >= insightsTTL || generated.UTC().YearDay() != now.YearDay()
-	if stale && !entry.building {
-		entry.building = true
+	// A snapshot from another UTC day or from the future covers the wrong
+	// window, so it is withheld rather than served stale.
+	servable := entry.ready && !generated.After(now) && generated.UTC().Format(time.DateOnly) == now.Format(time.DateOnly)
+	stale := !servable || now.Sub(generated) >= insightsTTL
+	// One scan at a time across all windows: each is a full pass over the
+	// projection on a slow volume and competes with ingestion.
+	if stale && !s.insightsScanning {
+		s.insightsScanning = true
 		go s.buildInsights(days, entry)
 	}
-	return entry.value, entry.ready
+	return entry.value, servable
 }
 
 func (s *server) buildInsights(days int, entry *insightsEntry) {
 	value, err := s.s.Insights(context.Background(), days, time.Now().UTC())
 	s.insightsMu.Lock()
 	defer s.insightsMu.Unlock()
-	entry.building = false
+	s.insightsScanning = false
 	if err != nil {
 		log.Printf("insights %dd: %v", days, err)
 		return
