@@ -13,7 +13,7 @@ test("insights is the default route and window changes refetch the fleet", async
   await expect(page.locator("#insightsView")).toBeVisible();
   await expect(page.locator("#listView")).toBeHidden();
   await expect(page.locator("#insightsTab")).toHaveAttribute("aria-current", "page");
-  await expect(page.locator(".kpi-number")).toHaveText(["33,020", "1,099", "4,384", "6"]);
+  await expect(page.locator("#insightsView .kpi-number")).toHaveText(["33,020", "1,099", "4,384", "6"]);
   await expect(page.locator(".metric-chart")).toHaveCount(6);
   const claude = page.locator('[data-metric="requests"] [data-model="claude-opus-5-5"]');
   await expect(claude).toHaveClass(/provider-anthropic/);
@@ -29,7 +29,7 @@ test("insights is the default route and window changes refetch the fleet", async
   await refetch;
   await expect(page.locator(".insights-status")).toBeVisible();
   await expect(page.locator(".daily-chart rect")).toHaveCount(28);
-  await expect(page.locator(".kpi-number").first()).toHaveText("7,703");
+  await expect(page.locator("#insightsView .kpi-number").first()).toHaveText("7,703");
   await page.evaluate(() => { document.documentElement.lang = "en"; });
   await expect(page.getByRole("heading", { name: "How the fleet behaves" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "How each model behaves" })).toBeVisible();
@@ -47,7 +47,7 @@ test("mobile insights stays within the viewport", async ({ page }) => {
   await expect(page.locator("#insightsView")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(0, 0, 0)");
   await page.locator("#sessionsTab").click();
-  await expect(page.locator(".key-pill")).toBeVisible();
+  await expect(page.locator(".key-pill").first()).toBeVisible();
   const filters = page.locator("#filterSidebar");
   await expect(filters).not.toHaveAttribute("open", "");
   await filters.locator(":scope > summary").click();
@@ -59,12 +59,12 @@ test("leaving insights mid-build does not yank the sessions view", async ({ page
   await page.setViewportSize({ width: 390, height: 500 });
   await expect(page.locator(".metric-chart")).toHaveCount(6);
   await page.locator("#sessionsTab").click();
-  await expect(page.locator(".key-pill")).toBeVisible();
+  await expect(page.locator(".key-pill").first()).toBeVisible();
   await page.evaluate(() => { document.getElementById("insightsDays").value = "90"; });
   await page.locator("#insightsTab").click();
   await expect(page.locator(".insights-status")).toBeVisible();
   await page.locator("#sessionsTab").click();
-  await expect(page.locator(".key-pill")).toBeVisible();
+  await expect(page.locator(".key-pill").first()).toBeVisible();
   await page.locator("#filterSidebar > summary").click();
   await page.evaluate(() => window.scrollTo(0, 300));
   await page.waitForTimeout(2600);
@@ -79,7 +79,7 @@ test("leaving a cold initial insights load does not yank the sessions view", asy
   await page.reload();
   await expect(page.locator(".insights-status")).toBeVisible();
   await page.locator("#sessionsTab").click();
-  await expect(page.locator(".key-pill")).toBeVisible();
+  await expect(page.locator(".key-pill").first()).toBeVisible();
   await page.locator("#filterSidebar > summary").click();
   await page.evaluate(() => window.scrollTo(0, 300));
   await page.waitForTimeout(2600);

@@ -23,19 +23,21 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("/v0/resource/plugins/cpa-session-archive/index.html#/sessions");
   await page.evaluate(() => { document.documentElement.lang = "en"; });
-  await expect(page.locator("#rows tr")).toHaveCount(2);
+  await expect(page.locator("#rows .session-row")).toHaveCount(2);
 });
 
 test("real imported sessions retain provenance, native events and exact originals", async ({ page, request }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await expect(page.locator(".kind-badge.external-import")).toHaveCount(2);
+  await page.locator("#filterSidebar > summary").click();
+  await page.locator(".facet-group").filter({has: page.locator('[data-facet="source.kind"]')}).locator("summary").click();
   await page.locator('[data-facet="source.kind"]').selectOption("external-local-history");
   await page.locator('[data-facet="source.tool"]').selectOption("codex");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
-  await expect(page.locator("#rows tr")).toHaveCount(1);
+  await expect(page.locator("#rows .session-row")).toHaveCount(1);
   await expect(page.locator("#rows")).toContainText("Archive fixture request");
-  await page.locator("#rows tr").click();
+  await page.locator("#rows .session-row").click();
   const sources = page.locator("#externalSources");
   await expect(sources).toContainText("Original files (1)");
   await sources.locator("details.external-sources > summary").click();

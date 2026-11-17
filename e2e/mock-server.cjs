@@ -21,7 +21,7 @@ const longSystem = (
   "系统指令必须按需加载，并允许查看全文。LONG-SYSTEM-CONTEXT ".repeat(500)
 ).slice(0, 17704) + "END-OF-SYSTEM-INSTRUCTIONS";
 const longAssistant =
-  "我会先说明处理结果，再展示必要的中间过程。" +
+  "**bold** <img src=x onerror=alert(1)>\n\n# Result\n*italic* and `inline`\n\n- first item\n- second item\n\n1. ordered item\n\n[Safe link](https://example.com) [Unsafe link](javascript:alert(1))\n\n```js\nconst html = \"<script>alert(1)</script>\";\n```\n\n我会先说明处理结果，再展示必要的中间过程。" +
   "LONG-ASSISTANT-BODY ".repeat(280) +
   "END-OF-COMPLETE-ASSISTANT-ANSWER";
 const longToolOutput =
@@ -238,7 +238,7 @@ const server = http.createServer((request, response) => {
     ]);
   }
   if (url.pathname === prefix + "/sessions") {
-    return json(response, [
+    const rows = [
       {
         session_id: sessionID,
         summary: escapedSummary,
@@ -250,7 +250,13 @@ const server = http.createServer((request, response) => {
         thread_sources: ["user"],
         kinds: ["turn"],
       },
-    ]);
+      ...(url.searchParams.has("project.name") ? [] : [{
+        session_id: "second-session", summary: "Review API documentation", project: "docs",
+        key_id: "sha256:another-key", model: "claude-opus-5-5", requests: 3,
+        last_at: "2026-08-02T12:35:56+08:00",
+      }]),
+    ];
+    return json(response, rows);
   }
   if (url.pathname === prefix + "/turn-text") {
     turnTextPolls++;
