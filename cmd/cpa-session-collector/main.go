@@ -17,12 +17,14 @@ import (
 )
 
 type server struct {
-	s            *archive.Store
-	q            chan archive.Record
-	ticketMu     sync.Mutex
-	tickets      map[string]exportTicket
-	turnTextMu   sync.Mutex
-	turnTextJobs map[string]bool
+	insightsMu    sync.Mutex
+	insightsCache map[int]archive.Insights
+	s             *archive.Store
+	q             chan archive.Record
+	ticketMu      sync.Mutex
+	tickets       map[string]exportTicket
+	turnTextMu    sync.Mutex
+	turnTextJobs  map[string]bool
 }
 
 type exportTicket struct {
@@ -123,6 +125,7 @@ func main() {
 	http.HandleFunc("/healthz", s.health)
 	http.HandleFunc("/ingest", s.ingest)
 	http.HandleFunc("/v1/stats", s.stats)
+	http.HandleFunc("/v1/insights", s.insights)
 	http.HandleFunc("/v1/facets", s.facets)
 	http.HandleFunc("/v1/sessions", s.sessions)
 	http.HandleFunc("/v1/sessions/", s.session)

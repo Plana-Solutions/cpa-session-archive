@@ -33,7 +33,7 @@ type managementResponse struct {
 
 func (p *Plugin) managementRegistration() map[string]any {
 	base := "/plugins/" + pluginID
-	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
+	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/insights"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
 }
 func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	var r managementRequest
@@ -68,6 +68,8 @@ func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	var target string
 	drop := map[string]bool{}
 	switch {
+	case r.Method == http.MethodGet && path == base+"/insights":
+		target = "/v1/insights"
 	case r.Method == http.MethodGet && path == base+"/stats":
 		target = "/v1/stats"
 	case r.Method == http.MethodGet && path == base+"/facets":
