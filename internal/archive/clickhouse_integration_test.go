@@ -358,23 +358,23 @@ func TestClickHouseHandlers(t *testing.T) {
 				t.Fatal("missing facet", name)
 			}
 		}
-		n := 121
+		n := 240
 		dirs, roles, types, texts, tools, calls, args := []string{}, []string{}, []string{}, []string{}, []string{}, []string{}, []string{}
 		positions := []int{}
 		flags := []bool{}
 		hashes := []int{}
 		for i := 0; i < n; i++ {
 			d, r := "input", "user"
-			if i == n-1 {
+			if i >= n/2 {
 				d, r = "output", "assistant"
 			}
 			dirs = append(dirs, d)
 			roles = append(roles, r)
 			types = append(types, "message")
-			texts = append(texts, strings.Repeat("💡", 20000))
+			texts = append(texts, strings.Repeat("\x01", 20000))
 			tools = append(tools, "")
 			calls = append(calls, "")
-			args = append(args, "")
+			args = append(args, strings.Repeat("\x02", 20000))
 			positions = append(positions, i)
 			flags = append(flags, false)
 			hashes = append(hashes, 0)
@@ -387,7 +387,7 @@ func TestClickHouseHandlers(t *testing.T) {
 		}
 		view := value.(RequestTimelineView)
 		b, _ = json.Marshal(view)
-		if len(b) >= resultLimit || len(view.Entries) != 81 || view.Entries[80].Role != "assistant" {
+		if len(b) >= resultLimit || len(view.Entries) != 160 || view.Entries[159].Role != "assistant" {
 			t.Fatalf("view bytes=%d entries=%d", len(b), len(view.Entries))
 		}
 		content, _ := collectExport(t, c, url.Values{"id": {"external:native-1"}, "format": {"sft"}})

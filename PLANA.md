@@ -55,7 +55,7 @@ All table names below use the parameterized configured database. User values use
 | `/sessions` | Filter conversation IDs, aggregate full matching conversations and usage totals in the window, union native session groups, sort and limit. |
 | `/turns` | Group and page conversation turns, then page their steps with bounded usage totals. Native transcripts group by user messages. |
 | `/turn-text` | Read the first user-message text in a turn-start tail, or the first imported event of the turn. |
-| `/request-view` | Read one fact summary and at most 80 messages per direction, keeping the latest inputs and outputs. Text and arguments cap at 8,000 bytes each. |
+| `/request-view` | Read one fact summary and at most 80 messages per direction, keeping the latest inputs and outputs. Text and arguments cap at 4,000 bytes each. |
 | `/requests` | Read explicit raw columns for one request ID with `LIMIT 1`; map stored bodies to the existing base64 response fields. Native events return their redacted JSON projection. |
 | `/request-context` | Read up to 32 matching call IDs strictly after the request start and within one day. Each preview caps at 64,000 bytes. |
 | `/export` | Page sessions and turn-final requests. Return at most 262,144 UTF-8 characters per chunk for browser concatenation. |

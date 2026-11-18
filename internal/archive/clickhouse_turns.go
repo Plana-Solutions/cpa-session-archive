@@ -314,7 +314,7 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 			Text      string `json:"text"`
 			Arguments string `json:"arguments"`
 		}
-		err = c.query(ctx, `SELECT lengthUTF8(m.text) AS chars,direction,position,role,type,tool_name,call_id,substring(text,1,8000) AS text,substring(arguments,1,8000) AS arguments FROM {db:Identifier}.messages AS m WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position DESC LIMIT 80 BY direction LIMIT 160`, w.params, &messages)
+		err = c.query(ctx, `SELECT lengthUTF8(m.text) AS chars,direction,position,role,type,tool_name,call_id,substring(text,1,4000) AS text,substring(arguments,1,4000) AS arguments FROM {db:Identifier}.messages AS m WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position DESC LIMIT 80 BY direction LIMIT 160`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}
