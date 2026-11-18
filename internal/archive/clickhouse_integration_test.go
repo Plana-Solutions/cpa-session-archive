@@ -149,7 +149,7 @@ func TestClickHouseHandlers(t *testing.T) {
 			outcome = "failed"
 		}
 		chInsert(t, c, "requests", map[string]any{"request_id": id, "trace_id": id, "started_at": ts, "completed_at": ts, "model": model, "request_body": `{"instructions":"test instructions","input":[{"role":"user","content":"hello"}]}`, "response_body": `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"reply"}]}]}`})
-		chInsert(t, c, "request_facts", map[string]any{"request_id": id, "started_at": ts, "ingested_at": ts, "model": model, "conversation_id": conversation, "client": "codex", "turn_id": "turn-1", "outcome": outcome, "status_code": 200, "duration_ms": 2500, "last_user_text": "hello '+ DROP TABLE requests; --", "reply_text": "reply", "reasoning_text": "thinking", "tools_called": []string{"shell"}, "msg_direction": []string{"input", "output", "output"}, "msg_position": []int{0, 0, 1}, "msg_role": []string{"user", "assistant", "tool"}, "msg_type": []string{"message", "function_call", "function_call_output"}, "msg_tool_name": []string{"", "shell", "shell"}, "msg_call_id": []string{"", "call-1", "call-1"}, "msg_arguments": []string{"", "{}", ""}, "msg_is_error": []bool{false, false, false}, "msg_text": []string{"hello", "", "result"}, "msg_text_hash": []uint64{1, 0, 2}})
+		chInsert(t, c, "request_facts", map[string]any{"request_id": id, "started_at": ts, "ingested_at": ts, "model": model, "conversation_id": conversation, "client": "codex", "turn_id": "turn-1", "outcome": outcome, "status_code": 200, "duration_ms": 2500, "last_user_text": "hello '+ DROP TABLE requests; --", "reply_text": "reply", "reasoning_text": "thinking", "tools_called": []string{"shell"}, "msg_direction": []string{"input", "output", "output"}, "msg_position": []int{0, 0, 1}, "msg_role": []string{"user", "assistant", "tool"}, "msg_type": []string{"message", "function_call", "function_call_output"}, "msg_tool_name": []string{"", "shell", "shell"}, "msg_call_id": []string{"", "call-1", "call-1"}, "msg_arguments": []string{"", "{}", ""}, "msg_is_error": []bool{false, false, false}, "msg_text": []string{"hello '+ DROP TABLE requests; --", "", "result"}, "msg_text_hash": []uint64{1, 0, 2}})
 		for attempt := 0; attempt < 2; attempt++ {
 			chInsert(t, c, "usage", map[string]any{"request_id": fmt.Sprintf("%s-attempt-%d", id, attempt), "trace_id": id, "requested_at": ts, "api_key_hash": "1234567890abcdef", "input_tokens": 10, "output_tokens": 2, "reasoning_tokens": 1, "total_tokens": 12})
 		}
@@ -364,7 +364,7 @@ func TestClickHouseHandlers(t *testing.T) {
 				texts[2] = reply
 			}
 			chInsert(t, c, "requests", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "completed_at": at, "requested_model": "requested-alias", "request_body": `{"messages":[],"padding":"` + strings.Repeat("x", 7<<20) + `"}`, "response_body": `{"text":"complete"}`})
-			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "ingested_at": at, "conversation_id": "claude:fixture", "model": "claude-opus", "client": "claude", "kind": kind, "prior_seen": i > 0, "input_items": 200, "tools_offered": []string{"a", "b"}, "last_user_text": "SKILL BODY", "reply_text": reply, "outcome": "succeeded", "request_kind": "turn", "thread_source": "test", "msg_direction": dirs, "msg_position": []int{0, 1, 0}, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": []string{"", "", ""}, "msg_call_id": []string{"call-x", "", ""}, "msg_arguments": []string{"", "", ""}, "msg_is_error": []bool{false, false, false}, "msg_text_hash": []int{0, 0, 0}})
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "ingested_at": at, "conversation_id": "claude:fixture", "model": "claude-opus", "client": "claude", "kind": kind, "prior_seen": i > 0, "input_items": 200, "tools_offered": []string{"a", "b"}, "last_user_text": "SKILL BODY", "reply_text": reply, "outcome": "succeeded", "status_code": 200, "request_kind": "turn", "thread_source": "test", "msg_direction": dirs, "msg_position": []int{0, 1, 0}, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": []string{"", "", ""}, "msg_call_id": []string{"call-x", "", ""}, "msg_arguments": []string{"", "", ""}, "msg_is_error": []bool{false, false, false}, "msg_text_hash": []int{0, 0, 0}})
 		}
 		value, err := c.read("request-context", url.Values{"id": {"claude-1"}, "call_id": {"call-x"}})
 		if err != nil {
@@ -418,7 +418,7 @@ func TestClickHouseHandlers(t *testing.T) {
 			if format == "archive" && (len(content) < 18<<20 || len(lines) != 2 || pages < 15) {
 				t.Fatalf("large archive bytes=%d lines=%d pages=%d", len(content), len(lines), pages)
 			}
-			if format == "sft" && (!strings.Contains(content, "/skill") || strings.Contains(content, "ignored")) {
+			if format == "sft" && (!strings.Contains(content, "next question") || strings.Contains(content, "ignored")) {
 				t.Fatal("invalid SFT content")
 			}
 		}
@@ -502,7 +502,16 @@ func TestClickHouseHandlers(t *testing.T) {
 				reply = "next real answer"
 			}
 			at := base.Add(time.Duration(i) * time.Second).Format("2006-01-02 15:04:05.999999999")
-			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("side-%d", i), "conversation_id": "claude:side-fixture", "started_at": at, "ingested_at": at, "model": "claude-side-fixture", "kind": "messages", "prior_seen": prior, "input_items": items, "tools_offered": tools, "last_user_text": prompt, "reply_text": reply, "msg_direction": []string{"input"}, "msg_role": []string{role}, "msg_type": []string{"message"}, "msg_text": []string{prompt}})
+			dirs, roles, types, texts := []string{"input"}, []string{role}, []string{"message"}, []string{prompt}
+			hash := 1
+			if i%2 == 1 {
+				hash = 2
+				dirs = []string{"input", "input"}
+				roles = []string{"system", "user"}
+				types = []string{"message", "message"}
+				texts = []string{"side instructions", prompt}
+			}
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("side-%d", i), "conversation_id": "claude:side-fixture", "started_at": at, "ingested_at": at, "model": "claude-side-fixture", "kind": "messages", "prior_seen": prior, "input_items": items, "tools_offered": tools, "last_user_text": prompt, "reply_text": reply, "system_prompt_hash": hash, "msg_direction": dirs, "msg_role": roles, "msg_type": types, "msg_text": texts})
 		}
 		q := url.Values{"session_id": {"claude:side-fixture"}}
 		result, err := c.read("turns", q)

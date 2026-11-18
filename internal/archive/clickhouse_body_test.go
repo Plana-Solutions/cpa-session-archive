@@ -95,7 +95,7 @@ func TestClickHouseMixedBodies(t *testing.T) {
 			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
 		}
 	}
-	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,started_at,ingested_at,conversation_id,kind,input_items,msg_direction,msg_position,msg_role,msg_type,msg_text,msg_tool_name,msg_call_id,msg_arguments,msg_is_error,msg_text_hash) SELECT request_id,started_at,started_at,concat('fixture-',request_id),'messages',200,['input','output'],[0,0],['user','tool'],['message','function_call_output'],['fixture prompt','answer'],['',''],['','call-test'],['',''],[false,false],[0,0] FROM cliproxy.requests`)
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,started_at,ingested_at,conversation_id,kind,status_code,outcome,input_items,msg_direction,msg_position,msg_role,msg_type,msg_text,msg_tool_name,msg_call_id,msg_arguments,msg_is_error,msg_text_hash) SELECT request_id,started_at,started_at,concat('fixture-',request_id),'messages',200,'succeeded',200,['input','output'],[0,0],['user','tool'],['message','function_call_output'],['fixture prompt','answer'],['',''],['','call-test'],['',''],[false,false],[0,0] FROM cliproxy.requests`)
 	chExec(t, c, `ALTER TABLE cliproxy.body_blobs DELETE WHERE lineage=`+strconv.FormatUint(bodystore.LineageKey("missing"), 10)+` SETTINGS mutations_sync=1`)
 	// Same hash in another lineage must not mask a missing blob.
 	sk, blobs := bodystore.Split([]byte(`{"input":["missing"]}`))
@@ -143,7 +143,12 @@ func TestClickHouseMixedBodies(t *testing.T) {
 							ToolCallID    string `json:"tool_call_id"`
 						}
 					}
-					if json.Unmarshal([]byte(content), &exported) != nil || len(exported.Messages) != 2 || exported.Messages[0].Content != "fixture prompt" || exported.Messages[1].Content != "answer" || exported.Messages[1].ToolCallID != "call-test" {
+					wantPrompt := "fixture prompt"
+					input, _ := trainingExample(Record{OriginalRequest: row.Body})
+					if len(input.Messages) > 0 {
+						wantPrompt, _ = input.Messages[0]["content"].(string)
+					}
+					if json.Unmarshal([]byte(content), &exported) != nil || len(exported.Messages) != 2 || exported.Messages[0].Content != wantPrompt || exported.Messages[1].Content != "answer" || exported.Messages[1].ToolCallID != "call-test" {
 						t.Fatal("mixed-format SFT changed messages")
 					}
 				}

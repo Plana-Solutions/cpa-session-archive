@@ -16,6 +16,7 @@ type TimelineEntry struct {
 	ParentID  string     `json:"parent_id,omitempty"`
 	Timestamp *time.Time `json:"timestamp,omitempty"`
 	Role      string     `json:"role"`
+	Direction string     `json:"direction,omitempty"`
 	Text      string     `json:"text,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	CallID    string     `json:"call_id,omitempty"`

@@ -162,7 +162,7 @@ func appendTrainingItems(dst *[]map[string]any, value any) {
 		case "function_call_output", "custom_tool_call_output":
 			*dst = append(*dst, map[string]any{"role": "tool", "tool_call_id": fmt.Sprint(firstAny(item["call_id"], item["id"])), "content": trainingString(firstAny(item["output"], item["content"]))})
 			return
-		case "reasoning", "compaction", "compaction_trigger":
+		case "reasoning", "thinking", "compaction", "compaction_trigger":
 			return
 		}
 		if calls, ok := item["tool_calls"].([]any); ok {
@@ -228,6 +228,9 @@ func trainingString(value any) string {
 		}
 		return strings.Join(parts, "\n")
 	case map[string]any:
+		if item["type"] == "reasoning" || item["type"] == "thinking" {
+			return ""
+		}
 		if text := firstAny(item["text"], item["output_text"], item["input_text"]); text != nil {
 			return trainingString(text)
 		}

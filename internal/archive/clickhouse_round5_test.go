@@ -33,10 +33,10 @@ func TestClickHouseRound5(t *testing.T) {
 	t.Run("latest successful snapshot", func(t *testing.T) {
 		for i, status := range []int{200, 201, 500} {
 			id := fmt.Sprint("sft-", i)
-			seed(id, "sft-session", i, status, `{"input":[{"role":"user","content":"history"},{"role":"assistant","content":"prior answer"},{"role":"user","content":"latest question"}]}`, `{"output":[{"role":"assistant","content":"latest answer"}]}`, nil)
+			seed(id, "sft-session", i, status, `{"input":[{"role":"user","content":"history"},{"role":"assistant","content":"prior answer"},{"role":"user","content":"latest question"}]}`, fmt.Sprintf(`{"output":[{"role":"assistant","content":"latest answer-%d"}]}`, i), nil)
 		}
 		content, _ := collectExport(t, c, url.Values{"id": {"sft-session"}, "format": {"sft"}})
-		if strings.Count(content, "prior answer") != 1 || strings.Contains(content, "answer-sft-") || !strings.Contains(content, "latest answer") {
+		if strings.Count(content, "prior answer") != 1 || strings.Contains(content, "answer-sft-") || !strings.Contains(content, "latest answer-1") || strings.Contains(content, "latest answer-2") || strings.Contains(content, "latest answer-0") {
 			t.Fatalf("SFT did not select latest successful snapshot: %s", content)
 		}
 	})
@@ -67,18 +67,32 @@ func TestClickHouseRound5(t *testing.T) {
 		}
 	})
 	t.Run("stateful and explicit turns", func(t *testing.T) {
-		for i := 0; i < 3; i++ {
-			seed(fmt.Sprint("state-", i), "state-session", 30+i, 200, `{}`, `{}`, map[string]any{"prior_seen": i > 0, "previous_response_id": "previous", "turn_id": fmt.Sprint("turn-", i), "reply_text": fmt.Sprint("reply-", i)})
-		}
-		got, err := c.read("turns", url.Values{"session_id": {"state-session"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _ := json.Marshal(got)
-		var page struct{ Total int }
-		json.Unmarshal(b, &page)
-		if page.Total != 3 {
-			t.Fatalf("stateful followups merged: %s", b)
+		for _, mode := range []string{"stateful", "explicit"} {
+			for i := 0; i < 3; i++ {
+				extra := map[string]any{"prior_seen": i > 0, "reply_text": fmt.Sprint("reply-", i)}
+				if mode == "stateful" {
+					extra["previous_response_id"] = "previous"
+				} else {
+					extra["turn_id"] = fmt.Sprint("turn-", i)
+					extra["input_items"] = 2
+					extra["system_prompt_hash"] = i + 1
+					extra["msg_direction"] = []string{"input", "input"}
+					extra["msg_role"] = []string{"system", "user"}
+					extra["msg_type"] = []string{"message", "message"}
+					extra["msg_text"] = []string{"instructions", fmt.Sprint("prompt-", i)}
+				}
+				seed(fmt.Sprint(mode, i), mode, 30+i, 200, `{}`, `{}`, extra)
+			}
+			got, err := c.read("turns", url.Values{"session_id": {mode}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(got)
+			var page struct{ Total int }
+			json.Unmarshal(b, &page)
+			if page.Total != 3 {
+				t.Fatalf("%s followups merged: %s", mode, b)
+			}
 		}
 	})
 	t.Run("shortened request entries", func(t *testing.T) {
@@ -89,7 +103,10 @@ func TestClickHouseRound5(t *testing.T) {
 		}
 		entries := got.(RequestTimelineView).Entries
 		if len(entries) != 2 || !entries[0].Truncated || !entries[1].Truncated {
-			t.Fatalf("silent truncation: %+v", entries)
+			for _, e := range entries {
+				t.Logf("role=%s len=%d truncated=%t", e.Role, len(e.Text), e.Truncated)
+			}
+			t.Fatal("shortened text or tool arguments missing truncation flag")
 		}
 	})
 	t.Run("native event projection", func(t *testing.T) {
@@ -121,4 +138,12 @@ func TestClickHouseRound5(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestTrainingSkipsThinkingBlocks(t *testing.T) {
+	example, _ := trainingExample(Record{OriginalRequest: []byte(`{"input":[{"role":"user","content":"question"},{"role":"assistant","content":[{"type":"thinking","text":"PRIVATE"},{"type":"reasoning","text":"PRIVATE"},{"type":"text","text":"answer"}]}]}`)})
+	b, _ := json.Marshal(example)
+	if strings.Contains(string(b), "PRIVATE") || !strings.Contains(string(b), "answer") {
+		t.Fatalf("nonconversational content in SFT: %s", b)
+	}
 }

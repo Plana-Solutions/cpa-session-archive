@@ -2229,7 +2229,7 @@
           : "";
         document.getElementById("activeCount").textContent = active.length;
       }
-      var sessionSearchTimer, sessionsRequest = 0, sessionsAbort, searchClient = crypto.randomUUID();
+      var sessionSearchTimer, sessionsRequest = 0, sessionsAbort, searchClient = globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2);
       window.addEventListener("pagehide",function(){
         if(sessionsAbort) sessionsAbort.abort();
         if(session) fetch(session.base+"/v0/management/plugins/cpa-session-archive/cancel-search?search_client="+encodeURIComponent(searchClient),{headers:{Authorization:"Bearer "+session.key},keepalive:true}).catch(function(){});
@@ -2822,7 +2822,7 @@
           html +=
             '<div class="context-summary">' +
             esc(t("contentTruncated")) +
-            "</div>";
+            "</div><button onclick=\"openRaw('" + (entry.direction === "input" ? "request" : "response") + "')\">" + esc(t("expandFull")) + "</button>";
         return html;
       }
       function renderRawLinks() {
@@ -3328,7 +3328,7 @@
             matched = contextEntries.find(function (candidate) {
               return candidate.callID === entry.callID;
             });
-          if (matched) entry = matched;
+          if (matched) entry.output = matched.output;
         }
         showSubDetail();
         document.getElementById("subDetailTitle").textContent = displayText(

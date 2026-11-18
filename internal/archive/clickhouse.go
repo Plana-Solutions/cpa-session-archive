@@ -270,7 +270,7 @@ const factsWithUsage = `FROM {db:Identifier}.request_facts AS f LEFT JOIN
  (SELECT r.request_id AS lifecycle_request_id,argMax(u.api_key_hash,u.requested_at) AS key_id,
  sum(u.input_tokens) AS input_tokens,sum(u.output_tokens) AS output_tokens,sum(u.reasoning_tokens) AS reasoning_tokens,sum(u.total_tokens) AS total_tokens
  FROM {db:Identifier}.usage AS u ASOF LEFT JOIN
- (SELECT request_id,trace_id,started_at FROM {db:Identifier}.requests WHERE trace_id!='' AND started_at >= {from:DateTime64(9,'UTC')} - INTERVAL 1 HOUR AND started_at < {to:DateTime64(9,'UTC')}) AS r
+ (SELECT request_id,trace_id,started_at FROM {db:Identifier}.requests WHERE trace_id!='' AND started_at >= {from:DateTime64(9,'UTC')} - INTERVAL 1 HOUR AND started_at < {to:DateTime64(9,'UTC')} + INTERVAL 1 HOUR) AS r
  ON u.trace_id=r.trace_id AND u.requested_at>=r.started_at
  WHERE u.requested_at >= {from:DateTime64(9,'UTC')} AND u.requested_at < {to:DateTime64(9,'UTC')} + INTERVAL 1 HOUR
  GROUP BY lifecycle_request_id) AS u ON f.request_id=u.lifecycle_request_id`
@@ -323,7 +323,6 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 	}
 	if q.Get("q") != "" {
 		w.params.Set("search", q.Get("q"))
-		w.params.Set("search_pattern", "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(q.Get("q")))+"%")
 		ids, err := c.searchSessions(ctx, w, source, filters, pageMatches(w.params))
 		if err != nil {
 			return nil, err

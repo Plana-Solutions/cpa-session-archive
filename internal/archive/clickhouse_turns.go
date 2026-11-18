@@ -37,7 +37,13 @@ const turnColumns = `f.request_id AS turn_id,conversation_id AS session_id,subst
 const conversationTraffic = `kind NOT IN ('count_tokens','models','embeddings')`
 const tailHasTool = `arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)`
 const tailHasUser = `arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)`
-const sideCall = `(prior_seen AND input_items <= 2 AND length(tools_offered) <= 1)`
+const sideCallShape = `(prior_seen AND input_items=2 AND length(tools_offered)<=1 AND previous_response_id=''
+ AND arrayExists((d,r)->d='input' AND r='system',msg_direction,msg_role) AND ` + tailHasUser + `
+ AND system_prompt_hash!=0 AND (conversation_id,system_prompt_hash) NOT IN
+ (SELECT conversation_id,argMin(system_prompt_hash,(started_at,request_id)) FROM {db:Identifier}.request_facts
+ WHERE ` + timeFilter + ` AND ` + conversationTraffic + ` GROUP BY conversation_id))`
+const sideCall = `(turn_id='' AND ` + sideCallShape + `)`
+const groupedSideCall = `(f.turn_id='' AND ` + sideCallShape + `)`
 const turnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 const turnUserText = `arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type)`
 
@@ -53,7 +59,7 @@ const numberedTurns = `WITH steps AS (
 ) `
 const groupedTurnColumns = `turn_key AS turn_id,any(conversation_id) AS session_id,
  argMin(request_id,(started_at,request_id)) AS title_request,
- substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!='' AND NOT ` + sideCall + `),1,12000) AS final_text,
+ substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!='' AND NOT ` + groupedSideCall + `),1,12000) AS final_text,
  count() AS requests,min(started_at) AS first_at,max(addMilliseconds(started_at,f.duration_ms)) AS last_at,
  argMax(key_id,(started_at,request_id)) AS key_id,argMax(f.model,(started_at,request_id)) AS model,
  argMax(f.outcome,(started_at,request_id)) AS outcome,argMax(f.status_code,(started_at,request_id)) AS status_code,
@@ -323,16 +329,17 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		view := turnPreview(t)
 		var messages []struct {
 			Chars     int    `json:"chars"`
+			Truncated bool   `json:"truncated"`
 			Direction string `json:"direction"`
 			Position  uint32 `json:"position"`
 			Role      string `json:"role"`
 			Type      string `json:"type"`
 			Tool      string `json:"tool_name"`
 			CallID    string `json:"call_id"`
-			Text      string `json:"text"`
-			Arguments string `json:"arguments"`
+			Text      string `json:"preview_text"`
+			Arguments string `json:"preview_arguments"`
 		}
-		err = c.query(ctx, `SELECT lengthUTF8(m.text) AS chars,direction,position,role,type,tool_name,call_id,substring(text,1,4000) AS text,substring(arguments,1,4000) AS arguments FROM {db:Identifier}.messages AS m WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position DESC LIMIT 80 BY direction LIMIT 160`, w.params, &messages)
+		err = c.query(ctx, `SELECT lengthUTF8(m.text) AS chars,CAST((lengthUTF8(m.text)>4000 OR lengthUTF8(arguments)>4000),'Bool') AS truncated,direction,position,role,type,tool_name,call_id,substringUTF8(text,1,4000) AS preview_text,substringUTF8(arguments,1,4000) AS preview_arguments FROM {db:Identifier}.messages AS m WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position DESC LIMIT 80 BY direction LIMIT 160`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}
@@ -360,7 +367,7 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 			if m.Type == "reasoning" || m.Type == "thinking" {
 				label = "reasoning"
 			}
-			view.Entries = append(view.Entries, TimelineEntry{Role: role, Label: label, CallID: m.CallID, Text: text})
+			view.Entries = append(view.Entries, TimelineEntry{Role: role, Label: label, CallID: m.CallID, Text: text, Direction: m.Direction, Truncated: m.Truncated})
 		}
 		return view, nil
 	}

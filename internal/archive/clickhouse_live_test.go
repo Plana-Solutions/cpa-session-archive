@@ -184,3 +184,68 @@ func TestClickHouseLiveRound4(t *testing.T) {
 		t.Logf("live export format=%s scope=%s bytes=%d pages=%d valid_jsonl=true", q.Get("format"), q.Get("scope"), len(content), pages)
 	}
 }
+
+func TestClickHouseLiveRound5(t *testing.T) {
+	if os.Getenv("ARCHIVE_LIVE_ROUND5") == "" {
+		t.Skip("explicit read-only live check opt-in required")
+	}
+	c := &clickhouseReader{config: pluginConfig{URL: os.Getenv("CLICKHOUSE_URL"), Database: "cliproxy", User: "inference_reader", Password: os.Getenv("CLICKHOUSE_PASSWORD")}, client: &http.Client{Timeout: 60 * time.Second}}
+	session := "claude:e956cdfd-3370-4922-a125-f65a0ff3513c"
+	got, err := c.read("turns", url.Values{"session_id": {session}, "limit": {"100"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(got)
+	var page struct {
+		Total int
+		Turns []clickhouseTurn
+	}
+	json.Unmarshal(b, &page)
+	steps := 0
+	for _, turn := range page.Turns {
+		steps += turn.Requests
+	}
+	if page.Total != 29 || steps != 198 {
+		t.Fatalf("live Claude grouping turns=%d steps=%d", page.Total, steps)
+	}
+	t.Logf("live Claude turns=%d conversation_steps=%d", page.Total, steps)
+	var requests []struct {
+		ID string `json:"id"`
+	}
+	err = c.query(context.Background(), `SELECT request_id AS id FROM cliproxy.requests WHERE started_at>now()-INTERVAL 30 DAY AND request_id IN (SELECT request_id FROM cliproxy.request_facts WHERE started_at>now()-INTERVAL 30 DAY) AND trace_id IN (SELECT trace_id FROM cliproxy.requests WHERE started_at>now()-INTERVAL 30 DAY AND request_id IN (SELECT request_id FROM cliproxy.request_facts WHERE started_at>now()-INTERVAL 30 DAY) AND trace_id!='' GROUP BY trace_id HAVING count()>1) ORDER BY started_at DESC LIMIT 20`, nil, &requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) == 0 {
+		t.Log("no shared traces in the live 30-day window; shared-trace boundary covered by local regression")
+		err = c.query(context.Background(), `SELECT request_id AS id FROM cliproxy.requests WHERE started_at>now()-INTERVAL 30 DAY AND request_id IN (SELECT request_id FROM cliproxy.request_facts WHERE started_at>now()-INTERVAL 30 DAY) AND trace_id!='' ORDER BY started_at DESC LIMIT 20`, nil, &requests)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(requests) == 0 {
+		t.Fatal("no live requests for attribution verification")
+	}
+	type tokens struct{ Input, Output, Reasoning, Total uint64 }
+	for _, request := range requests {
+		w, _ := windowFor(nil, 365)
+		w.params.Set("id", request.ID)
+		w, err = c.narrow(context.Background(), w, `request_id={id:String}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actual, expected []tokens
+		err = c.query(context.Background(), `SELECT u.input_tokens AS Input,u.output_tokens AS Output,u.reasoning_tokens AS Reasoning,u.total_tokens AS Total `+factsWithUsage+` WHERE `+timeFilter+` AND f.request_id={id:String} LIMIT 1`, w.params, &actual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = c.query(context.Background(), `SELECT sum(input_tokens) AS Input,sum(output_tokens) AS Output,sum(reasoning_tokens) AS Reasoning,sum(total_tokens) AS Total FROM cliproxy.usage_by_request WHERE lifecycle_request_id={id:String} LIMIT 1`, w.params, &expected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(actual) != 1 || len(expected) != 1 || actual[0] != expected[0] {
+			t.Fatalf("per-request tokens differ from usage_by_request actual=%v expected=%v", actual, expected)
+		}
+	}
+	t.Logf("per-request input/output/reasoning/total match usage_by_request requests=%d", len(requests))
+}
