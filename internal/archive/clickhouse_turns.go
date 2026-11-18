@@ -383,15 +383,18 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		w.params.Set("start", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
 		w.params.Set("limit", strconv.Itoa(min(limit, 32)))
 		var messages []struct {
-			RequestID string `json:"request_id"`
-			CallID    string `json:"call_id"`
-			Text      string `json:"text"`
+			RequestID string    `json:"request_id"`
+			StartedAt time.Time `json:"started_at"`
+			Direction string    `json:"direction"`
+			Position  uint32    `json:"position"`
+			CallID    string    `json:"call_id"`
 		}
-		err = c.query(ctx, `SELECT request_id,call_id,substring(text,1,64000) AS text FROM {db:Identifier}.messages WHERE conversation_id={session:String} AND started_at > {start:DateTime64(9,'UTC')} AND started_at < {start:DateTime64(9,'UTC')} + INTERVAL 1 DAY AND call_id={call:String} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
+		err = c.query(ctx, `SELECT request_id,started_at,direction,position,call_id FROM {db:Identifier}.messages WHERE conversation_id={session:String} AND started_at > {start:DateTime64(9,'UTC')} AND started_at < {start:DateTime64(9,'UTC')} + INTERVAL 1 DAY AND call_id={call:String} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}
 		output := []map[string]string{}
+		contextBytes := 0
 		for _, m := range messages {
 			cw := w
 			cw.params = cloneValues(w.params)
@@ -400,7 +403,19 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 			if _, err = c.rawRequest(ctx, cw, clickhouseTurn{TurnSummary: TurnSummary{TurnID: m.RequestID, SessionID: t.SessionID}}); err != nil {
 				return nil, err
 			}
-			output = append(output, map[string]string{"type": "function_call_output", "call_id": m.CallID, "output": m.Text})
+			cw.params.Set("from", m.StartedAt.Format("2006-01-02 15:04:05.999999999"))
+			cw.params.Set("to", m.StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
+			cw.params.Set("context_direction", m.Direction)
+			cw.params.Set("context_position", strconv.FormatUint(uint64(m.Position), 10))
+			text, err := c.rawBytes(ctx, cw, "text", ` FROM {db:Identifier}.messages WHERE `+timeFilter+` AND request_id={id:String} AND direction={context_direction:String} AND position={context_position:UInt32} AND call_id={call:String} AND role='tool'`)
+			if err != nil {
+				return nil, err
+			}
+			contextBytes += len(text)
+			if contextBytes > maxRawBody {
+				return nil, badQuery("tool context exceeds 64 MiB limit")
+			}
+			output = append(output, map[string]string{"type": "function_call_output", "call_id": m.CallID, "output": string(text)})
 		}
 		body, _ := json.Marshal(map[string]any{"output": output})
 		return []Record{{RequestID: id, SessionID: t.SessionID, Response: body}}, nil
