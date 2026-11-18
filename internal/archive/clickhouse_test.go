@@ -3,11 +3,13 @@ package archive
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClickHouseReadBoundary(t *testing.T) {
@@ -71,5 +73,63 @@ func TestReaderConfigAndDateValidation(t *testing.T) {
 	w, err := windowFor(url.Values{"from": {"2026-11-01"}, "to": {"2026-11-01"}}, 30)
 	if err != nil || w.to.Sub(w.from).Hours() != 24 {
 		t.Fatal("inclusive UTC day failed", err)
+	}
+}
+
+func TestReadCancellation(t *testing.T) {
+	started := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	c := &clickhouseReader{config: pluginConfig{URL: server.URL, Database: "cliproxy"}, client: server.Client()}
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.readContext(context.Background(), "sessions", url.Values{"search_client": {"tab"}})
+		first <- err
+	}()
+	<-started
+	parent, cancel := context.WithCancel(context.Background())
+	second := make(chan error, 1)
+	go func() {
+		_, err := c.readContext(parent, "sessions", url.Values{"search_client": {"tab"}})
+		second <- err
+	}()
+	select {
+	case err := <-first:
+		if err == nil {
+			t.Fatal("superseded search succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("old search not cancelled")
+	}
+	<-started
+	_, err := c.read("cancel-search", url.Values{"search_client": {"tab"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-second:
+		if err == nil {
+			t.Fatal("page exit search succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("page exit did not cancel")
+	}
+	cancel()
+	parent, cancel = context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := c.readContext(parent, "sessions", nil); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("disconnected request succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("disconnect did not cancel")
 	}
 }

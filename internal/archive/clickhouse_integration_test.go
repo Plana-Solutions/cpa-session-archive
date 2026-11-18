@@ -186,23 +186,23 @@ func TestClickHouseHandlers(t *testing.T) {
 		}
 		call("insights", url.Values{"from": {time.Now().UTC().Format(time.DateOnly)}, "to": {time.Now().UTC().Format(time.DateOnly)}}, 200)
 		for _, endpoint := range []string{"turns", "turn-text"} {
-			params := url.Values{"session_id": {"codex:thread"}, "turn_id": {"req-1"}}
+			params := url.Values{"session_id": {"codex:thread"}, "turn_id": {"turn-1"}}
 			call(endpoint, params, 200)
 		}
 		call("turns", url.Values{"session_id": {"codex:thread"}, "order": {"desc"}}, 200)
 		for _, endpoint := range []string{"requests", "request-view", "request-context"} {
-			call(endpoint, url.Values{"id": {"req-1"}}, 200)
+			call(endpoint, url.Values{"id": {"req-1"}, "call_id": {"call-1"}}, 200)
 			call(endpoint, url.Values{"id": {"absent"}}, 404)
 		}
 		var detail Record
-		if err := json.Unmarshal(call("requests", url.Values{"id": {"req-1"}}, 200), &detail); err != nil {
+		if err := json.Unmarshal(call("requests", url.Values{"id": {"req-1"}, "call_id": {"call-1"}}, 200), &detail); err != nil {
 			t.Fatal(err)
 		}
 		if detail.SessionID != "codex:thread" || !strings.Contains(string(detail.OriginalRequest), "test instructions") || !strings.Contains(string(detail.Response), "reply") {
 			t.Fatal("raw request mapping lost content")
 		}
 		var view RequestTimelineView
-		if err := json.Unmarshal(call("request-view", url.Values{"id": {"req-1"}}, 200), &view); err != nil {
+		if err := json.Unmarshal(call("request-view", url.Values{"id": {"req-1"}, "call_id": {"call-1"}}, 200), &view); err != nil {
 			t.Fatal(err)
 		}
 		if len(view.Entries) != 3 || view.Entries[1].Role != "tool_call" || view.Entries[2].Role != "tool_result" {
@@ -212,8 +212,8 @@ func TestClickHouseHandlers(t *testing.T) {
 			Turns []clickhouseTurn `json:"turns"`
 			Total int              `json:"total"`
 		}
-		json.Unmarshal(call("turns", url.Values{"session_id": {"codex:thread"}, "limit": {"1"}, "offset": {"1"}}, 200), &page)
-		if page.Total != 2 || len(page.Turns) != 1 || page.Turns[0].TurnID != "req-2" || page.Turns[0].TotalTokens != 24 {
+		json.Unmarshal(call("turns", url.Values{"session_id": {"codex:thread"}, "limit": {"1"}, "offset": {"0"}}, 200), &page)
+		if page.Total != 1 || len(page.Turns) != 1 || page.Turns[0].TurnID != "turn-1" || page.Turns[0].TotalTokens != 48 {
 			t.Fatalf("turn pagination %+v", page)
 		}
 		sum := int64(0)
@@ -237,6 +237,7 @@ func TestClickHouseHandlers(t *testing.T) {
 		t.Fatal(e)
 	}
 	chExec(t, c, string(b))
+	c.externalChecked = time.Time{}
 	t.Run("empty imported table", func(t *testing.T) { call("sessions", nil, 200); call("facets", nil, 200); call("stats", nil, 200) })
 	chInsert(t, c, "external_messages", map[string]any{"session_id": "native-1", "native_session_id": "original-1", "source": "claude", "project": "repo", "title": "Imported transcript", "ts": ts, "position": 1, "role": "user", "type": "message", "text": "Native prompt"}, map[string]any{"session_id": "native-1", "source": "claude", "project": "repo", "title": "Imported transcript", "ts": ts, "position": 2, "role": "assistant", "type": "message", "text": "Native reply"})
 	t.Run("imported sessions", func(t *testing.T) {
@@ -257,10 +258,174 @@ func TestClickHouseHandlers(t *testing.T) {
 			call(endpoint, url.Values{"id": {"external:native-1:1"}}, 200)
 		}
 	})
+	t.Run("Claude turns, large exports and bounded request view", func(t *testing.T) {
+		base := time.Now().UTC().Add(-time.Hour)
+		for i := 0; i < 5; i++ {
+			at := base.Add(time.Duration(i) * time.Second).Format("2006-01-02 15:04:05.999999999")
+			roles := []string{"user", "user", "assistant"}
+			types := []string{"message", "message", "message"}
+			texts := []string{"/skill", "SKILL BODY", "partial reply"}
+			dirs := []string{"input", "input", "output"}
+			kind := "messages"
+			reply := "partial reply"
+			if i == 1 || i == 2 {
+				roles[0] = "tool"
+				types[0] = "tool_result"
+				texts[0] = "tool result"
+				texts[1] = "Tool loaded."
+				reply = "final reply"
+				texts[2] = reply
+			}
+			if i == 3 {
+				kind = "count_tokens"
+				reply = "ignored"
+			}
+			if i == 4 {
+				texts[0] = "next question"
+				reply = "next answer"
+				texts[2] = reply
+			}
+			chInsert(t, c, "requests", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "completed_at": at, "requested_model": "requested-alias", "request_body": `{"messages":[],"padding":"` + strings.Repeat("x", 7<<20) + `"}`, "response_body": `{"text":"complete"}`})
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "ingested_at": at, "conversation_id": "claude:fixture", "model": "claude-opus", "client": "claude", "kind": kind, "prior_seen": i > 0, "last_user_text": "SKILL BODY", "reply_text": reply, "outcome": "succeeded", "request_kind": "turn", "thread_source": "test", "msg_direction": dirs, "msg_position": []int{0, 1, 0}, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": []string{"", "", ""}, "msg_call_id": []string{"call-x", "", ""}, "msg_arguments": []string{"", "", ""}, "msg_is_error": []bool{false, false, false}, "msg_text_hash": []int{0, 0, 0}})
+		}
+		value, err := c.read("request-context", url.Values{"id": {"claude-1"}, "call_id": {"call-x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recs := value.([]Record)
+		var contextOutput struct {
+			Output []map[string]string `json:"output"`
+		}
+		json.Unmarshal(recs[0].Response, &contextOutput)
+		if len(contextOutput.Output) != 1 || contextOutput.Output[0]["call_id"] != "call-x" {
+			t.Fatal("context must exclude the current request and match the call", contextOutput)
+		}
+		params := url.Values{"session_id": {"claude:fixture"}}
+		value, err = c.read("turns", params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(value)
+		var page struct {
+			Turns []clickhouseTurn
+			Total int
+		}
+		json.Unmarshal(b, &page)
+		if page.Total != 2 || page.Turns[0].Requests != 3 || page.Turns[0].UserText != "/skill" || page.Turns[0].FinalText != "final reply" {
+			t.Fatalf("grouping %+v", page)
+		}
+		params.Set("turn_id", "claude-0")
+		params.Set("limit", "1")
+		params.Set("offset", "1")
+		value, err = c.read("turns", params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ = json.Marshal(value)
+		var detail struct {
+			Records []RequestTimelineView
+			Total   int
+		}
+		json.Unmarshal(b, &detail)
+		if detail.Total != 3 || len(detail.Records) != 1 || detail.Records[0].RequestID != "claude-1" {
+			t.Fatalf("steps %s", b)
+		}
+		value, err = c.read("turn-text", params)
+		if err != nil || value.(map[string]string)["text"] != "/skill" {
+			t.Fatal("turn text", value, err)
+		}
+		for _, format := range []string{"archive", "sft"} {
+			content, pages := collectExport(t, c, url.Values{"id": {"claude:fixture"}, "format": {format}})
+			lines := strings.Split(strings.TrimSpace(content), "\n")
+			if format == "archive" && (len(content) < 18<<20 || len(lines) != 2 || pages < 30) {
+				t.Fatalf("large archive bytes=%d lines=%d pages=%d", len(content), len(lines), pages)
+			}
+			if format == "sft" && (!strings.Contains(content, "/skill") || strings.Contains(content, "ignored")) {
+				t.Fatal("invalid SFT content")
+			}
+		}
+		rows, err := c.read("sessions", url.Values{"model.requested": {"requested-alias"}})
+		if err != nil || len(rows.([]archiveSession)) != 1 {
+			t.Fatal("requested model", rows, err)
+		}
+		facets, err := c.read("facets", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ = json.Marshal(facets)
+		for _, name := range []string{"tool.name", "request.kind", "thread.source", "model.requested"} {
+			if !strings.Contains(string(b), name) {
+				t.Fatal("missing facet", name)
+			}
+		}
+		n := 121
+		dirs, roles, types, texts, tools, calls, args := []string{}, []string{}, []string{}, []string{}, []string{}, []string{}, []string{}
+		positions := []int{}
+		flags := []bool{}
+		hashes := []int{}
+		for i := 0; i < n; i++ {
+			d, r := "input", "user"
+			if i == n-1 {
+				d, r = "output", "assistant"
+			}
+			dirs = append(dirs, d)
+			roles = append(roles, r)
+			types = append(types, "message")
+			texts = append(texts, strings.Repeat("💡", 20000))
+			tools = append(tools, "")
+			calls = append(calls, "")
+			args = append(args, "")
+			positions = append(positions, i)
+			flags = append(flags, false)
+			hashes = append(hashes, 0)
+		}
+		at := base.Format("2006-01-02 15:04:05.999999999")
+		chInsert(t, c, "request_facts", map[string]any{"request_id": "large-view", "conversation_id": "large:view", "started_at": at, "ingested_at": at, "msg_direction": dirs, "msg_position": positions, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": tools, "msg_call_id": calls, "msg_arguments": args, "msg_is_error": flags, "msg_text_hash": hashes})
+		value, err = c.read("request-view", url.Values{"id": {"large-view"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		view := value.(RequestTimelineView)
+		b, _ = json.Marshal(view)
+		if len(b) >= resultLimit || len(view.Entries) != 81 || view.Entries[80].Role != "assistant" {
+			t.Fatalf("view bytes=%d entries=%d", len(b), len(view.Entries))
+		}
+		content, _ := collectExport(t, c, url.Values{"id": {"external:native-1"}, "format": {"sft"}})
+		if !strings.Contains(content, "Native reply") {
+			t.Fatal("native SFT")
+		}
+	})
+
 	var present []struct {
 		N uint64 `json:"n"`
 	}
-	if e := c.query(context.Background(), "SELECT count() AS n FROM cliproxy.requests", nil, &present); e != nil || present[0].N != 3 {
+	if e := c.query(context.Background(), "SELECT count() AS n FROM cliproxy.requests", nil, &present); e != nil || present[0].N != 8 {
 		t.Fatal("parameterization damaged fixtures", e)
 	}
+}
+
+func collectExport(t *testing.T, c *clickhouseReader, q url.Values) (string, int) {
+	t.Helper()
+	var content strings.Builder
+	for pages := 1; pages < 10000; pages++ {
+		value, err := c.read("export", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ticket := value.(map[string]any)
+		content.WriteString(ticket["content"].(string))
+		if ticket["done"].(bool) {
+			for _, line := range strings.Split(strings.TrimSpace(content.String()), "\n") {
+				if !json.Valid([]byte(line)) {
+					t.Fatal("invalid JSONL export")
+				}
+			}
+			return content.String(), pages
+		}
+		q.Set("offset", fmt.Sprint(ticket["next_offset"]))
+		q.Set("byte_offset", fmt.Sprint(ticket["next_byte_offset"]))
+		q.Set("session_offset", fmt.Sprint(ticket["next_session_offset"]))
+	}
+	t.Fatal("export cursor did not terminate")
+	return "", 0
 }

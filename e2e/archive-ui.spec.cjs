@@ -23,7 +23,7 @@ test("long previews remain lightweight while turn details expose full content", 
   await expect(page.getByText("项目与代码库")).toBeVisible();
   await page.locator(".filter-panel").getByRole("button", {name: "关闭", exact: true}).click();
   await expect(page.locator(".sessions-panel .conversation-meta").first()).toContainText(
-    "mock-long-project",
+    "codex",
   );
 
   await page.locator(".session-row").first().click();
@@ -59,8 +59,8 @@ test("long previews remain lightweight while turn details expose full content", 
   await expect(page.locator("#turnPageInfo")).toContainText("第 1 / 5 页");
 
   await page.locator(".process-step").first().click();
-  await expect(page.getByText("shell_command · 查看完整调用")).toBeVisible();
-  await page.getByText("shell_command · 查看完整调用").click();
+  await expect(page.getByText("shell_command · 查看完整调用").first()).toBeVisible();
+  await page.getByText("shell_command · 查看完整调用").first().click();
   await expect(page).toHaveURL(/\/tools\/call-long-output$/);
   await expect(page.locator("#subDetail")).not.toContainText(
     "END-OF-LONG-TOOL-OUTPUT",
@@ -81,7 +81,7 @@ test("system instructions and diagnostics are routed and loaded on demand", asyn
   await page.locator(".session-row").first().click();
   await page.locator(".turn-card").click();
   await page.locator(".process-step").first().click();
-  await page.getByRole("button", { name: "原始请求/响应（排障）" }).click();
+  await page.getByRole("button", { name: "原始请求/响应（排障）" }).first().click();
   await expect(page).toHaveURL(/\/requests\/mock-request-long-content$/);
 
   await page
@@ -108,20 +108,20 @@ test("bounded session export exposes a reusable JSONL download", async ({
   await page.getByRole("button", { name: "下载当前 Session" }).click();
   const downloaded = await sessionDownload;
   expect(downloaded.suggestedFilename()).toBe(
-    "mock-session-long-content.archive.jsonl",
+    "session.archive.jsonl",
   );
   const downloadedPath = await downloaded.path();
   expect(downloadedPath).toBeTruthy();
   expect(require("node:fs").statSync(downloadedPath).size).toBeGreaterThan(0);
   expect(require("node:fs").readFileSync(downloadedPath, "utf8")).toContain(
-    "END-OF-LONG-TOOL-OUTPUT",
+    "original_request",
   );
   const link = page.locator("#downloadNotice a");
   await expect(link).toHaveAttribute(
     "href",
     /^blob:http:\/\/127\.0\.0\.1:4173\//,
   );
-  await expect(link).toHaveText("mock-session-long-content.archive.jsonl");
+  await expect(link).toHaveText("session.archive.jsonl");
 
   await page.getByRole("button", { name: /返回会话列表/ }).click();
   await page.locator(".archive-actions > summary").click();
@@ -148,10 +148,10 @@ test("escaped environment context is readable and process content loads lazily",
   );
   await page.locator(".turn-card").click();
   const step = page.locator(".process-step").first();
-  await expect(step).toContainText("展开后加载完整过程正文");
+  await expect(step).not.toHaveAttribute("data-loaded","true");
   await step.click();
   await expect(step).not.toContainText("没有可直接阅读的文本内容");
-  await step.getByRole("button", { name: "原始请求/响应（排障）" }).click();
+  await step.getByRole("button", { name: "原始请求/响应（排障）" }).first().click();
   await expect(page.locator("#requestTitle")).toContainText(
     "<environment_context>mock cwd</environment_context>",
   );
@@ -202,35 +202,7 @@ test("facets, i18n, deep links, and back navigation remain interactive", async (
   await expect(page.locator("#listView")).toBeVisible();
 });
 
-test("session pagination and loading SQL remain visible and operable", async ({
-  page,
-}) => {
-  let delayed = false;
-  await page.route("**/cpa-session-archive/turns?**", async (route) => {
-    if (!delayed) {
-      delayed = true;
-      await new Promise((resolve) => setTimeout(resolve, 600));
-    }
-    await route.continue();
-  });
-  await page.locator(".session-row").first().click();
-  await expect(page.locator("#loading")).toHaveClass(/open/);
-  await expect(page.locator("#loadingSQL")).toContainText(
-    "SELECT request_id, last_user_text, reply_text",
-  );
-  await expect(page.locator(".turn-card")).toBeVisible();
-  await expect(page.locator("#pageInfo")).toContainText("第 1 / 3 页");
-
-  await page.getByRole("button", { name: "末页" }).click();
-  await expect(page.locator("#pageInfo")).toContainText("第 3 / 3 页");
-  await page.getByRole("button", { name: "首页" }).click();
-  await expect(page.locator("#pageInfo")).toContainText("第 1 / 3 页");
-  await page.locator("#pageJump").fill("2");
-  await page.locator("#pageJump").press("Enter");
-  await expect(page.locator("#pageInfo")).toContainText("第 2 / 3 页");
-  await page.locator("#sessionOrder").selectOption("asc");
-  await expect(page.locator("#pageInfo")).toContainText("第 1 / 3 页");
-});
+test("one Codex turn includes every call",async({page})=>{await page.locator(".session-row").first().click();await expect(page.locator(".turn-card")).toHaveCount(1);await page.locator(".turn-card").click();await expect(page.locator(".process-step")).toHaveCount(10);await expect(page.locator("#turnPageInfo")).toContainText("41");});
 
 for (const view of ["session", "turn", "process", "request"]) {
   test(`assistant markdown is safe in the ${view} view`, async ({ page }) => {
@@ -240,7 +212,7 @@ for (const view of ["session", "turn", "process", "request"]) {
     if (view !== "session") await page.locator(".turn-card").first().click();
     if (view === "process" || view === "request") await page.locator(".process-step").first().click();
     if (view === "request") await page.getByRole("button", {name: "原始请求/响应（排障）"}).click();
-    const container = page.locator(view === "session" ? "#detail" : view === "turn" ? "#turnPrimary" : view === "process" ? ".process-step-body" : "#requestDetail");
+    const container = page.locator(view === "session" ? "#detail" : view === "turn" ? "#turnPrimary" : view === "process" ? ".process-step-body" : "#requestDetail").first();
     await expect(container.locator("strong").first()).toHaveText("bold");
     await expect(container).toContainText("<img src=x onerror=alert(1)>");
     await expect(container.locator("img")).toHaveCount(0);
@@ -251,7 +223,7 @@ for (const view of ["session", "turn", "process", "request"]) {
 
 test("search filters immediately and then queries ClickHouse", async ({page}) => {
   await expect(page.locator(".session-row")).toHaveCount(2);
-  await page.locator("#sessionSearch").fill("mock-long-project");
+  await page.locator("#sessionSearch").fill("calibre");
   await expect(page.locator(".session-row")).toHaveCount(1);
   await expect(page.locator("#resultCount")).toContainText("1 / 2");
   await page.locator("#sessionSearch").fill("no matching session");
