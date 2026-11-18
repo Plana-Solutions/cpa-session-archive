@@ -57,14 +57,14 @@ func (c *client) writeBodies(ctx context.Context, items []bodyItems) (int64, err
 			known[sentinel] = true
 			continue
 		}
-		b, err := c.call(ctx, `SELECT hex(hash) AS hash FROM cliproxy.body_blobs WHERE lineage={lineage:UInt64} AND hash IN (`+strings.Join(refs, ",")+`) FORMAT JSONEachRow`, url.Values{"param_lineage": {strconv.FormatUint(item.lineage, 10)}}, nil, false)
+		b, err := c.call(ctx, `SELECT hex(hash) AS hash_hex FROM cliproxy.body_blobs WHERE lineage={lineage:UInt64} AND hash IN (`+strings.Join(refs, ",")+`) FORMAT JSONEachRow`, url.Values{"param_lineage": {strconv.FormatUint(item.lineage, 10)}}, nil, false)
 		if err != nil {
 			return 0, fmt.Errorf("blob preload failed: %s", err)
 		}
 		dec := json.NewDecoder(bytes.NewReader(b))
 		for {
 			var row struct {
-				Hash string `json:"hash"`
+				Hash string `json:"hash_hex"`
 			}
 			err := dec.Decode(&row)
 			if err == io.EOF {

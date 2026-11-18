@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -196,4 +198,26 @@ func TestQuarantineBreakerKeepsCheckpoint(t *testing.T) {
 		t.Fatal("retry must preserve main frontier", state, err)
 	}
 
+}
+
+func TestBodyPreloadIntegration(t *testing.T) {
+	endpoint := os.Getenv("CHIMPORT_TEST_URL")
+	if endpoint == "" {
+		t.Skip("isolated ClickHouse required")
+	}
+	c := newClient(endpoint, "default", "")
+	ctx := context.Background()
+	host, err := c.call(ctx, "SELECT hostName() FORMAT TabSeparated", nil, nil, false)
+	if err != nil || string(host) != "cpa-archive-import-sample\n" {
+		t.Fatal("refusing non-sample server", err)
+	}
+	row := requestRow{RequestBody: `{"messages":[{"content":"preload regression"}]}`, StartedAt: "2026-11-18 12:00:00.000000000"}
+	item := splitBody(&row, "chimport-preload-regression")
+	defer c.call(ctx, "DELETE FROM cliproxy.body_blobs WHERE lineage={lineage:UInt64} SETTINGS lightweight_deletes_sync=2", url.Values{"param_lineage": {strconv.FormatUint(item.lineage, 10)}}, nil, false)
+	if n, err := c.writeBodies(ctx, []bodyItems{item}); err != nil || n == 0 {
+		t.Fatal("initial blob", n, err)
+	}
+	if n, err := c.writeBodies(ctx, []bodyItems{item}); err != nil || n != 0 {
+		t.Fatal("committed blob was inserted again", n, err)
+	}
 }
