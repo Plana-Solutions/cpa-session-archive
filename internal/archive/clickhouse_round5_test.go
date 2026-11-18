@@ -178,6 +178,29 @@ func TestClickHouseRound5(t *testing.T) {
 		}
 	})
 
+	t.Run("full contextual tool result", func(t *testing.T) {
+		seed("context-call", "context-long", 80, 200, `{}`, `{}`, nil)
+		full := strings.Repeat("result", 14000) + "END-OF-CONTEXT"
+		seed("context-result", "context-long", 81, 200, `{}`, `{}`, map[string]any{"msg_role": []string{"tool", "assistant"}, "msg_type": []string{"function_call_output", "message"}, "msg_call_id": []string{"long-call", ""}, "msg_text": []string{full, "answer"}})
+		got, err := c.read("request-context", url.Values{"id": {"context-call"}, "call_id": {"long-call"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		records := got.([]Record)
+		if len(records) != 1 {
+			t.Fatal("missing contextual tool result")
+		}
+		var body struct {
+			Output []struct {
+				Output string `json:"output"`
+			}
+		}
+		json.Unmarshal(records[0].Response, &body)
+		if len(body.Output) != 1 || body.Output[0].Output != full {
+			t.Fatal("contextual tool result was shortened")
+		}
+	})
+
 }
 
 func TestTrainingSkipsThinkingBlocks(t *testing.T) {
