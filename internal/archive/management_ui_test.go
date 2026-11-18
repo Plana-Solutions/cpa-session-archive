@@ -15,7 +15,7 @@ func TestManagementUIContainsBilingualFacetedExperience(t *testing.T) {
 		[]byte("data-i18n"),
 		[]byte("#/sessions/"),
 		[]byte("Download this session"),
-		[]byte("Parameterized SQL"),
+		[]byte("Query outline"),
 		[]byte("previousPage"),
 		[]byte("toolCallsAndResults"),
 		[]byte("downloadExport('all')"),
@@ -52,8 +52,5 @@ func TestManagementUIContainsBilingualFacetedExperience(t *testing.T) {
 	}
 	if bytes.Contains(managementHTML, []byte("response.blob()")) {
 		t.Error("complete exports must not be buffered in the browser")
-	}
-	if bytes.Contains(managementHTML, []byte("link.download")) {
-		t.Error("download attribute overrides the server-provided JSONL filename")
 	}
 }

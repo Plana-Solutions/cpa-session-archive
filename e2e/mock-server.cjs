@@ -28,8 +28,8 @@ const longToolOutput =
   "命令执行结果：\n" +
   "TOOL-OUTPUT-LINE\n".repeat(7000) +
   "END-OF-LONG-TOOL-OUTPUT";
-let turnTextPolls = 0;
-const insightsBuilt = new Set();
+
+
 const originalRequest = {
   model: "gpt-5.6-sol",
   instructions: longSystem,
@@ -162,14 +162,15 @@ const server = http.createServer((request, response) => {
   const prefix = "/v0/management/plugins/cpa-session-archive";
   if (url.pathname === prefix + "/insights") {
     const window = url.searchParams.get("days");
-    if ((window === "7" || window === "90") && !insightsBuilt.has(window)) {
-      insightsBuilt.add(window);
-      return json(response, { status: "building" });
-    }
-    const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days")) || 30));
+    let days = Math.max(1, Math.min(365, Number(url.searchParams.get("days")) || 30));
     const to = new Date("2026-11-17T20:00:00Z");
     const from = new Date("2026-11-17T00:00:00Z");
     from.setUTCDate(from.getUTCDate() - days + 1);
+    if (url.searchParams.has("from")) {
+      from.setTime(Date.parse(url.searchParams.get("from")));
+      to.setTime(Date.parse(url.searchParams.get("to")) + 86400000);
+      days = Math.round((to - from) / 86400000);
+    }
     const models = [
       ["claude-opus-5-5", "anthropic", 12340, 31.2, .023, .041],
       ["gpt-6.1-sol", "openai", 8950, 18.7, .014, .027],
@@ -222,6 +223,7 @@ const server = http.createServer((request, response) => {
         records: 23,
       },
       { name: "client", value: "codex", sessions: 1, records: 23 },
+      { name: "client", value: "claude-import", sessions: 1, records: 2 },
       { name: "model.resolved", value: "gpt-6.1-sol", sessions: 1, records: 23 },
       {
         name: "tool.name",
@@ -237,6 +239,7 @@ const server = http.createServer((request, response) => {
       },
     ]);
   }
+  if (url.pathname === prefix + "/external-sources") return json(response, []);
   if (url.pathname === prefix + "/sessions") {
     const rows = [
       {
@@ -256,14 +259,20 @@ const server = http.createServer((request, response) => {
         last_at: "2026-08-02T12:35:56+08:00",
       }]),
     ];
-    return json(response, rows);
+    if (url.searchParams.get("client") === "claude-import") return json(response, [{
+      session_id: "external:imported-session", summary: "Imported native transcript", project: "native-project",
+      client: "claude-import", requests: 2, last_at: "2026-08-03T12:35:56Z",
+      source_kind: "external-local-history", source_tool: "claude",
+    }]);
+    const search = (url.searchParams.get("q") || "").toLowerCase();
+    return json(response, rows.filter(row => !search || JSON.stringify(row).toLowerCase().includes(search)));
   }
   if (url.pathname === prefix + "/turn-text") {
-    turnTextPolls++;
-    if (turnTextPolls === 1) {
-      return json(response, { status: "building" });
-    }
     return json(response, { status: "ok", text: longUser });
+  }
+  if (url.pathname === prefix + "/turns" && url.searchParams.get("session_id") === "external:imported-session") {
+    const turn = {turn_id: "1", session_id: "external:imported-session", user_text: "Native prompt", final_text: "Native answer", requests: 1, outcome: "imported", first_at: "2026-08-03T12:34:56Z", last_at: "2026-08-03T12:34:56Z"};
+    return json(response, url.searchParams.has("turn_id") ? {turn, records: [], total: 1, limit: 20, offset: 0} : {turns: [turn], total: 1, limit: 20, offset: 0});
   }
   if (url.pathname === prefix + "/turns" && url.searchParams.has("turn_id")) {
     return json(response, {
@@ -327,24 +336,10 @@ const server = http.createServer((request, response) => {
         ? "cpa-session-archive.all." + format + ".jsonl"
         : sessionID + "." + format + ".jsonl";
     return json(response, {
-      url: "/archive-api/v1/exports/mock-ticket",
+      content: JSON.stringify({session_id: sessionID, request: originalRequest, response: originalResponse}) + "\n",
       filename,
       content_type: "application/x-ndjson",
     });
-  }
-  if (url.pathname === "/archive-api/v1/exports/mock-ticket") {
-    response.writeHead(200, {
-      "content-type": "application/x-ndjson",
-      "content-disposition":
-        'attachment; filename="' + sessionID + '.archive.jsonl"',
-    });
-    return response.end(
-      JSON.stringify({
-        session_id: sessionID,
-        request: originalRequest,
-        response: originalResponse,
-      }) + "\n",
-    );
   }
   response.writeHead(404, { "content-type": "text/plain" });
   response.end("not found: " + url.pathname);

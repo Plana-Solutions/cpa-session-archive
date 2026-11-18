@@ -100,7 +100,7 @@ test("system instructions and diagnostics are routed and loaded on demand", asyn
   );
 });
 
-test("session export exposes a reusable server-streamed JSONL download", async ({
+test("bounded session export exposes a reusable JSONL download", async ({
   page,
 }) => {
   await page.locator(".session-row").first().click();
@@ -119,7 +119,7 @@ test("session export exposes a reusable server-streamed JSONL download", async (
   const link = page.locator("#downloadNotice a");
   await expect(link).toHaveAttribute(
     "href",
-    "http://127.0.0.1:4173/archive-api/v1/exports/mock-ticket",
+    /^blob:http:\/\/127\.0\.0\.1:4173\//,
   );
   await expect(link).toHaveText("mock-session-long-content.archive.jsonl");
 
@@ -129,7 +129,7 @@ test("session export exposes a reusable server-streamed JSONL download", async (
   const allDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载全库" }).click();
   expect((await allDownload).suggestedFilename()).toBe(
-    "mock-session-long-content.archive.jsonl",
+    "cpa-session-archive.all.sft.jsonl",
   );
   await expect(page.locator("#allDownloadNotice a")).toHaveText(
     "cpa-session-archive.all.sft.jsonl",
@@ -216,7 +216,7 @@ test("session pagination and loading SQL remain visible and operable", async ({
   await page.locator(".session-row").first().click();
   await expect(page.locator("#loading")).toHaveClass(/open/);
   await expect(page.locator("#loadingSQL")).toContainText(
-    "SELECT request_id, key_id, summary",
+    "SELECT request_id, last_user_text, reply_text",
   );
   await expect(page.locator(".turn-card")).toBeVisible();
   await expect(page.locator("#pageInfo")).toContainText("第 1 / 3 页");
@@ -249,18 +249,18 @@ for (const view of ["session", "turn", "process", "request"]) {
   });
 }
 
-test("search filters only the loaded sessions without a network query", async ({page}) => {
+test("search filters immediately and then queries ClickHouse", async ({page}) => {
   await expect(page.locator(".session-row")).toHaveCount(2);
-  const requests = [];
-  page.on("request", request => requests.push(request.url()));
   await page.locator("#sessionSearch").fill("mock-long-project");
   await expect(page.locator(".session-row")).toHaveCount(1);
   await expect(page.locator("#resultCount")).toContainText("1 / 2");
   await page.locator("#sessionSearch").fill("no matching session");
   await expect(page.locator(".session-row")).toHaveCount(0);
+  const search = page.waitForRequest(request => request.url().includes("q=no+matching+session"));
+  await search;
+  await expect(page.locator(".session-row")).toHaveCount(0);
   await page.locator("#sessionSearch").fill("");
   await expect(page.locator(".session-row")).toHaveCount(2);
-  expect(requests.filter(url => url.includes("/sessions?"))).toEqual([]);
 });
 
 for (const width of [390, 1280]) {

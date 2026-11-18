@@ -802,7 +802,7 @@
       .insights h1 { font-size: clamp(28px, 3vw, 42px); font-weight: 650; letter-spacing: -.04em; margin-bottom: 8px; }
       .insights h2 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -.02em; }
       .insights-head p { margin: 0; }
-      .window-control { display: flex; align-items: center; gap: 12px; flex: none; padding-top: 8px; }
+      .window-control { flex-wrap: wrap; display: flex; align-items: center; gap: 12px; flex: none; padding-top: 8px; }
       .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin: 48px 0 56px; }
       .kpi-number { font-size: clamp(40px, 5.6vw, 80px); line-height: 1.1; letter-spacing: -.05em; font-weight: 600; }
       .kpi-label { margin-top: 14px; font-size: 16px; font-weight: 650; }
@@ -829,6 +829,9 @@
       .model-bar { height: 9px; border-radius: 0 9px 9px 0; background: var(--provider); display: block; }
       .model-value { text-align: right; color: var(--muted); }
       .insights-footnote { max-width: 1080px; color: var(--muted); line-height: 1.8; margin: 42px 0 0; }
+      #insightsRange { display: flex; flex-wrap: wrap; gap: 8px; }
+      #insightsRange[hidden] { display: none; }
+      #insightsRange label { display: grid; gap: 4px; }
       .insights-status { padding: 48px 0; color: var(--muted); }
       .card { background: transparent; border: 0; border-right: 1px solid var(--border); border-radius: 0; padding: 8px 18px 8px 0; }
       .card:last-child { border-right: 0; }
@@ -854,7 +857,7 @@
         .nav-brand { display: none; }
         .insights { padding: 28px 20px 48px; }
         .insights-head { flex-direction: column; gap: 16px; }
-        .window-control { padding-top: 0; }
+        .window-control { flex-wrap: wrap; padding-top: 0; }
         .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 20px; margin: 32px 0 40px; }
         .kpi-number { font-size: 46px; }
         .kpi-label { font-size: 14px; }
@@ -1019,13 +1022,18 @@
     <main id="insightsView" class="insights" hidden>
       <header class="insights-head">
         <div><h1 data-i18n="insightsTitle"></h1><p id="insightsGenerated" class="muted"></p></div>
-        <label class="window-control"><span data-i18n="insightsWindow"></span>
+        <div class="window-control"><label for="insightsDays" data-i18n="insightsWindow"></label>
           <select id="insightsDays" onchange="loadInsights()">
             <option value="7" data-i18n="days7"></option>
             <option value="30" data-i18n="days30" selected></option>
-            <option value="90" data-i18n="days90"></option>
+            <option value="90" data-i18n="days90"></option><option value="custom" data-i18n="customRange"></option>
           </select>
-        </label>
+          <form id="insightsRange" hidden onsubmit="event.preventDefault();loadInsights()">
+            <label><span data-i18n="rangeFrom"></span><input id="insightsFrom" type="date" required></label>
+            <label><span data-i18n="rangeTo"></span><input id="insightsTo" type="date" required></label>
+            <button data-i18n="apply"></button>
+          </form>
+        </div>
       </header>
       <div id="insightsContent" aria-live="polite"></div>
     </main>
@@ -1201,7 +1209,7 @@
       var messages = {
         zh: {
           filtersLabel: "筛选",
-          searchLoaded: "搜索已加载的会话…",
+          searchLoaded: "搜索会话…",
           sourcesAndExports: "原始文件与导出",
           removeFilter: "移除筛选 {name}",
           requestsCount: "{count} 次请求",
@@ -1217,6 +1225,7 @@
           loadedCount: "已显示 {shown} / {loaded} 个已加载会话",
 
           insightsTab: "洞察", sessionsTab: "会话",
+          storageBackend: "存储", customRange: "自定义日期", rangeFrom: "开始日期 (UTC)", rangeTo: "结束日期 (UTC)", tokensLabel: "tokens",
           insightsTitle: "模型舰队表现一览", insightsWindow: "时间范围",
           days7: "7 天", days30: "30 天", days90: "90 天",
           generated: "生成于 {time}", insightsLoading: "正在汇总请求数据…",
@@ -1255,7 +1264,7 @@
           sftFormat: "后训练 SFT JSONL",
           newestFirst: "最新优先",
           oldestFirst: "最早优先",
-          executingQuery: "正在执行的参数化 SQL（敏感值未展开）",
+          executingQuery: "查询概要（省略敏感值）",
           loadingSessions: "正在查询会话列表…",
           loadingSession: "正在查询 Session 请求索引…",
           loadingTurns: "正在按用户回合整理对话…",
@@ -1369,7 +1378,7 @@
         },
         en: {
           filtersLabel: "Filters",
-          searchLoaded: "Search loaded sessions…",
+          searchLoaded: "Search conversations…",
           sourcesAndExports: "Sources & exports",
           removeFilter: "Remove filter {name}",
           requestsCount: "{count} requests",
@@ -1381,10 +1390,11 @@
           minutesAgo: "{count}m ago",
           hoursAgo: "{count}h ago",
           daysAgo: "{count}d ago",
-          noSearchResults: "No matches in the loaded sessions.",
+          noSearchResults: "No matching conversations.",
           loadedCount: "Showing {shown} of {loaded} loaded sessions",
 
           insightsTab: "Insights", sessionsTab: "Sessions",
+          storageBackend: "Storage", customRange: "Custom dates", rangeFrom: "From (UTC)", rangeTo: "Through (UTC)", tokensLabel: "tokens",
           insightsTitle: "How the fleet behaves", insightsWindow: "Window",
           days7: "7 days", days30: "30 days", days90: "90 days",
           generated: "Generated {time}", insightsLoading: "Summarizing requests…",
@@ -1425,7 +1435,7 @@
           newestFirst: "Newest first",
           oldestFirst: "Oldest first",
           executingQuery:
-            "Parameterized SQL in progress (sensitive values omitted)",
+            "Query outline (sensitive values omitted)",
           loadingSessions: "Querying session list…",
           loadingSession: "Querying the session request index…",
           loadingTurns: "Grouping the conversation into user turns…",
@@ -1600,15 +1610,16 @@
         document.getElementById("insightsGenerated").textContent = "";
         content.innerHTML = '<p class="insights-status">' + esc(t("insightsLoading")) + '</p>';
         try {
-          var data;
-          for (var attempt = 0; attempt < 150; attempt++) {
-            data = await api("/insights?days=" + days + "&min_requests=20");
-            if (request !== insightsRequest) return;
-            if (data.status !== "building") break;
-            await new Promise(function (resolve) { setTimeout(resolve, 2000); });
-            if (request !== insightsRequest) return;
-          }
-          if (data.status === "building") throw Error("insights build timeout");
+          var range = document.getElementById("insightsRange");
+          range.hidden = days !== "custom";
+          var query = new URLSearchParams({min_requests: "20"});
+          if (days === "custom") {
+            if (!range.reportValidity()) return;
+            query.set("from", document.getElementById("insightsFrom").value);
+            query.set("to", document.getElementById("insightsTo").value);
+          } else query.set("days", days);
+          var data = await api("/insights?" + query);
+          if (request !== insightsRequest) return;
           insightsData = data;
           renderInsights(data);
         } catch (error) {
@@ -1717,18 +1728,14 @@
         fullTextSequence = 0,
         loadingCount = 0;
       var sqlTemplates = {
-        sessions:
-          "SELECT s.session_id, s.requests, s.first_at, s.last_at, s.key_id, s.model, s.project, s.summary\nFROM session_summaries s\nWHERE EXISTS (SELECT 1 FROM session_facets f WHERE f.session_id = s.session_id AND f.name = ? AND f.value = ?) …\nORDER BY s.last_at DESC LIMIT ?",
-        session:
-          "SELECT request_id, key_id, summary, response_preview, requested_model, model, outcome, status_code, started_at, completed_at, facets_json\nFROM turn_records\nWHERE session_id = ?\nORDER BY started_at, id\n-- incomplete projections safely fall back to records; rows are grouped by durable turn.id or consecutive user-summary runs",
-        turn: "SELECT request_id, key_id, summary, response_preview, requested_model, model, outcome, status_code, started_at, completed_at, facets_json\nFROM turn_records\nWHERE session_id = ? AND request_id IN (…)\nORDER BY started_at, id LIMIT ? OFFSET ?\n-- raw CAS payloads are loaded only from deeper diagnostic routes",
-        turnText:
-          "SELECT original_ref FROM records WHERE session_id = ? AND request_id IN (…)\n-- expanded once in a background job, then cached in turn_texts",
-        request:
-          "SELECT …, original_ref, upstream_ref, response_ref, metadata_json, facets_json\nFROM records\nWHERE request_id = ? LIMIT 1",
-        export:
-          "SELECT request_id FROM records WHERE session_id = ? ORDER BY started_at, id\n-- CAS payloads are expanded and emitted incrementally as archive or SFT JSONL",
+        sessions: "SELECT conversation_id, count(), sum(total_tokens) FROM request_facts LEFT JOIN aggregated_usage … WHERE started_at >= {from:DateTime64} AND started_at < {to:DateTime64} GROUP BY conversation_id ORDER BY max(started_at) DESC LIMIT {limit:UInt32}",
+        session: "SELECT request_id, last_user_text, reply_text, model, outcome FROM request_facts WHERE conversation_id = {session:String} AND started_at >= {from:DateTime64} AND started_at < {to:DateTime64} ORDER BY started_at, request_id LIMIT {limit:UInt32} OFFSET {offset:UInt32}",
+        turn: "SELECT request_id, last_user_text, reply_text, reasoning_text, tools_called FROM request_facts WHERE conversation_id = {session:String} AND request_id = {turn:String} LIMIT 1",
+        turnText: "SELECT last_user_text FROM request_facts WHERE conversation_id = {session:String} AND request_id = {turn:String} LIMIT 1",
+        request: "SELECT role, type, tool_name, text FROM messages WHERE request_id = {id:String} LIMIT 100; raw diagnostics read one requests row by request_id",
+        export: "SELECT request_id FROM request_facts WHERE conversation_id = {session:String} LIMIT 201; raw requests are fetched individually, at most 200 records and 4 MiB",
       };
+
       var facetOrder = [
         "source.kind",
         "source.tool",
@@ -2021,9 +2028,9 @@
           ),
         ]);
         (results[0].items || []).forEach(function (item) {
-          keyAliases[
-            normalizeKeyHash(item.apiKeyHash || item.api_key_hash)
-          ] = item.alias;
+          var hash = normalizeKeyHash(item.apiKeyHash || item.api_key_hash);
+          keyAliases[hash] = item.alias;
+          keyAliases[hash.slice(0, 16)] = item.alias;
         });
         (results[1].identities || []).forEach(function (identity) {
           var alias =
@@ -2035,10 +2042,7 @@
       }
       async function start() {
         try {
-          // These independent endpoints previously ran one after another,
-          // making the page wait for several management-proxy round trips
-          // before the first session row appeared.
-          var startup = await Promise.all([
+                  var startup = await Promise.all([
             api("/stats"),
             api("/facets"),
             loadKeyMetadata(),
@@ -2049,7 +2053,7 @@
           document.getElementById("cards").innerHTML = [
             ["sessionsTab", insightNumber(st.sessions, 0)],
             ["columnRequests", insightNumber(st.records, 0)],
-            ["storageUsed", fmt(st.compressed_bytes)],
+            ["storageBackend", "ClickHouse"],
           ]
             .map(function (item) {
               return (
@@ -2220,21 +2224,26 @@
           : "";
         document.getElementById("activeCount").textContent = active.length;
       }
+      var sessionSearchTimer, sessionsRequest = 0;
       async function loadSessions() {
+        var request = ++sessionsRequest;
         var q = new URLSearchParams();
         Object.keys(appliedFacets).forEach(function (name) {
           q.set(name, appliedFacets[name]);
         });
         q.set("limit", appliedLimit);
+        if (sessionList.query) q.set("q", sessionList.query);
         var rows = await api(
           "/sessions?" + q,
           t("loadingSessions"),
           sqlTemplates.sessions,
         );
+        if (request !== sessionsRequest) return;
         rows.forEach(function (row) {
           sessionsByID[row.session_id] = row;
         });
         sessionList.loaded = rows;
+        sessionList.serverQuery = sessionList.query;
         renderSessionRows();
         updateActiveFilters();
       }
@@ -2257,6 +2266,8 @@
       function searchSessions(value) {
         sessionList.query = value.trim().toLocaleLowerCase();
         renderSessionRows();
+        clearTimeout(sessionSearchTimer);
+        sessionSearchTimer = setTimeout(loadSessions, 250);
       }
       function relativeTime(value) {
         var minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
@@ -2272,7 +2283,7 @@
       }
       function renderSessionRows() {
         var rows = sessionList.loaded.filter(function (row) {
-          return [titleText(row.summary || row.project), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
+          return sessionList.serverQuery === sessionList.query || [titleText(row.summary || row.project), displayText(row.summary), row.project, row.model, row.session_id].join(" ").toLocaleLowerCase().includes(sessionList.query);
         });
         document.getElementById("resultCount").textContent = t("loadedCount", {
           shown: insightNumber(rows.length, 0), loaded: insightNumber(sessionList.loaded.length, 0),
@@ -2285,6 +2296,8 @@
           return '<a class="session-row" href="#/sessions/' + encodeURIComponent(row.session_id) + '"><div class="session-copy"><div class="conversation-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="conversation-meta">' +
             [
               row.project ? '<span class="session-project" title="' + esc(row.project) + '">' + esc(row.project) + '</span>' : "",
+              row.client ? "<span>" + esc(row.client) + "</span>" : "",
+              row.total_tokens ? "<span>" + esc(insightNumber(row.total_tokens, 0) + " " + t("tokensLabel")) + "</span>" : "",
               row.model ? modelLabel(row.model) : "",
               '<span>' + esc(t(row.requests === 1 ? "requestOne" : "requestsCount", {count: insightNumber(row.requests, 0)})) + '</span>',
               '<time title="' + esc(localTime(row.last_at)) + '">' + esc(relativeTime(row.last_at)) + '</time>',
@@ -2450,6 +2463,8 @@
         document.getElementById("turnTitle").title = turnTitle;
         document.getElementById("turnMeta").innerHTML = renderMetaChips([
           modelLabel(turn.model), esc(localTime(turn.last_at)), esc(keyName(turn.key_id)),
+          turn.total_tokens ? esc(insightNumber(turn.total_tokens, 0) + " tokens") : "",
+          turn.duration_ms ? esc((turn.duration_ms / 1000).toFixed(1) + " s") : "",
         ]);
         document.getElementById("turnPrimary").innerHTML =
           '<section class="user-message"><h3>' +
@@ -2463,7 +2478,7 @@
             turn.final_text || t("noFinalAnswer"),
             !turn.final_text, true,
           ) +
-          "</section>";
+          "</section>" + (turn.reasoning ? '<details class="panel"><summary>Reasoning</summary>' + renderMessage("assistant", turn.reasoning) + '</details>' : "");
         document.getElementById("turnProcess").innerHTML = (page.records || [])
           .map(function (view, index) {
             return renderTurnProcess(view, offset + index + 1);
@@ -2841,8 +2856,11 @@
             throw Error(
               "HTTP " + response.status + ": " + (await response.text()),
             );
-          var ticket = await response.json(),
-            url = new URL(ticket.url, session.base).href;
+          var ticket = await response.json();
+          var url = ticket.content !== undefined
+            ? URL.createObjectURL(new Blob([ticket.content], {type: ticket.content_type}))
+            : new URL(ticket.url, session.base).href;
+          if (ticket.content !== undefined) setTimeout(function () { URL.revokeObjectURL(url); }, 1800000);
           var notice = document.getElementById(
             scope === "all" ? "allDownloadNotice" : "downloadNotice",
           );
@@ -2855,10 +2873,12 @@
               '">' +
               esc(ticket.filename || url) +
               "</a>";
+            if (ticket.content !== undefined) notice.querySelector("a").download = ticket.filename;
             notice.classList.add("open");
           }
           var link = document.createElement("a");
           link.href = url;
+          if (ticket.content !== undefined) link.download = ticket.filename;
           document.body.appendChild(link);
           link.click();
           link.remove();

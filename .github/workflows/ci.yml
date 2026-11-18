@@ -18,6 +18,11 @@ jobs:
         with:
           bun-version: latest
       - run: sudo apt-get update && sudo apt-get install -y gcc libc6-dev
+      - name: Install isolated ClickHouse test binary
+        run: |
+          curl -fsSL https://builds.clickhouse.com/master/amd64/clickhouse -o /tmp/clickhouse
+          chmod +x /tmp/clickhouse
+          echo "CLICKHOUSE_BINARY=/tmp/clickhouse" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps --only-shell chromium

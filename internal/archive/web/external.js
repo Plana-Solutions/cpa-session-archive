@@ -44,8 +44,8 @@ var ExternalArchive = {
   nativeDiagnostics: function () {
     return '<details class="technical-meta"><summary>' +
       esc(this.label("Event details", "事件详情")) + '</summary><p class="muted">' +
-      esc(this.label("This is a native session event. Original files are available in the session’s External import panel.",
-        "这是原生会话事件。原始文件可在会话的外部导入面板下载。")) +
+      esc(this.label("This is a native session event. The imported event projection is available below. Original source files are not stored in ClickHouse.",
+        "这是原生会话事件。ClickHouse 仅保存导入事件，不保存原始文件。")) +
       '</p><button onclick="openRaw(\'request\')">' +
       esc(this.label("View event projection", "查看事件投影")) + "</button></details>";
   },
