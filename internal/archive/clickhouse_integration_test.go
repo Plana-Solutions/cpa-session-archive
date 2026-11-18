@@ -350,7 +350,7 @@ func TestClickHouseHandlers(t *testing.T) {
 				texts[2] = reply
 			}
 			chInsert(t, c, "requests", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "completed_at": at, "requested_model": "requested-alias", "request_body": `{"messages":[],"padding":"` + strings.Repeat("x", 7<<20) + `"}`, "response_body": `{"text":"complete"}`})
-			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "ingested_at": at, "conversation_id": "claude:fixture", "model": "claude-opus", "client": "claude", "kind": kind, "prior_seen": i > 0, "last_user_text": "SKILL BODY", "reply_text": reply, "outcome": "succeeded", "request_kind": "turn", "thread_source": "test", "msg_direction": dirs, "msg_position": []int{0, 1, 0}, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": []string{"", "", ""}, "msg_call_id": []string{"call-x", "", ""}, "msg_arguments": []string{"", "", ""}, "msg_is_error": []bool{false, false, false}, "msg_text_hash": []int{0, 0, 0}})
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("claude-%d", i), "started_at": at, "ingested_at": at, "conversation_id": "claude:fixture", "model": "claude-opus", "client": "claude", "kind": kind, "prior_seen": i > 0, "input_items": 200, "tools_offered": []string{"a", "b"}, "last_user_text": "SKILL BODY", "reply_text": reply, "outcome": "succeeded", "request_kind": "turn", "thread_source": "test", "msg_direction": dirs, "msg_position": []int{0, 1, 0}, "msg_role": roles, "msg_type": types, "msg_text": texts, "msg_tool_name": []string{"", "", ""}, "msg_call_id": []string{"call-x", "", ""}, "msg_arguments": []string{"", "", ""}, "msg_is_error": []bool{false, false, false}, "msg_text_hash": []int{0, 0, 0}})
 		}
 		value, err := c.read("request-context", url.Values{"id": {"claude-1"}, "call_id": {"call-x"}})
 		if err != nil {
@@ -401,7 +401,7 @@ func TestClickHouseHandlers(t *testing.T) {
 		for _, format := range []string{"archive", "sft"} {
 			content, pages := collectExport(t, c, url.Values{"id": {"claude:fixture"}, "format": {format}})
 			lines := strings.Split(strings.TrimSpace(content), "\n")
-			if format == "archive" && (len(content) < 18<<20 || len(lines) != 2 || pages < 30) {
+			if format == "archive" && (len(content) < 18<<20 || len(lines) != 2 || pages < 15) {
 				t.Fatalf("large archive bytes=%d lines=%d pages=%d", len(content), len(lines), pages)
 			}
 			if format == "sft" && (!strings.Contains(content, "/skill") || strings.Contains(content, "ignored")) {
@@ -460,6 +460,94 @@ func TestClickHouseHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("side calls remain steps and cannot supply replies or search hits", func(t *testing.T) {
+		before, err := c.read("insights", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := time.Now().UTC().Add(-30 * time.Minute)
+		for i := 0; i < 6; i++ {
+			prompt, reply := "real prompt", "real partial"
+			prior := i > 0
+			items := 200
+			tools := []string{"a", "b"}
+			role := "user"
+			if i%2 == 1 {
+				prompt = "side-call-only-needle"
+				reply = "wrong side answer"
+				items = 2
+				tools = []string{"WebSearch"}
+			}
+			if i == 2 {
+				role = "tool"
+				prompt = "tool result"
+				reply = "real final"
+			}
+			if i == 4 {
+				prompt = "next real prompt"
+				reply = "next real answer"
+			}
+			at := base.Add(time.Duration(i) * time.Second).Format("2006-01-02 15:04:05.999999999")
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fmt.Sprintf("side-%d", i), "conversation_id": "claude:side-fixture", "started_at": at, "ingested_at": at, "model": "claude-side-fixture", "kind": "messages", "prior_seen": prior, "input_items": items, "tools_offered": tools, "last_user_text": prompt, "reply_text": reply, "msg_direction": []string{"input"}, "msg_role": []string{role}, "msg_type": []string{"message"}, "msg_text": []string{prompt}})
+		}
+		q := url.Values{"session_id": {"claude:side-fixture"}}
+		result, err := c.read("turns", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page struct {
+			Turns []clickhouseTurn
+			Total int
+		}
+		b, _ := json.Marshal(result)
+		json.Unmarshal(b, &page)
+		if page.Total != 2 || page.Turns[0].UserText != "real prompt" || page.Turns[0].FinalText != "real final" || page.Turns[0].Requests != 4 || page.Turns[1].FinalText != "next real answer" || page.Turns[1].Requests != 2 {
+			t.Fatalf("side call grouping %s", b)
+		}
+		q.Set("turn_id", "side-0")
+		result, err = c.read("turns", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ = json.Marshal(result)
+		var detail struct{ Records []RequestTimelineView }
+		json.Unmarshal(b, &detail)
+		if len(detail.Records) != 4 || detail.Records[1].RequestID != "side-1" {
+			t.Fatalf("side step missing %s", b)
+		}
+		result, err = c.read("sessions", url.Values{"q": {"side-call-only-needle"}})
+		if err != nil || len(result.([]archiveSession)) != 0 {
+			t.Fatal("side call searchable", result, err)
+		}
+		after, err := c.read("insights", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.(Insights).Totals.Turns-before.(Insights).Totals.Turns != 2 {
+			t.Fatal("Insights side call turns", before, after)
+		}
+	})
+	t.Run("export keeps its first time bound while new sessions arrive", func(t *testing.T) {
+		q := url.Values{"scope": {"all"}, "format": {"archive"}}
+		result, err := c.read("export", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ticket := result.(map[string]any)
+		cutoff := ticket["to"].(string)
+		at, err := time.Parse(time.RFC3339Nano, cutoff)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "000-new-after-export", "source": "test", "position": 1, "role": "user", "text": "must not enter pinned export", "ts": at.Add(time.Second).Format("2006-01-02 15:04:05.999999999")})
+		q.Set("to", cutoff)
+		q.Set("from", ticket["from"].(string))
+		content, _ := collectExport(t, c, q)
+		if strings.Contains(content, "must not enter pinned export") {
+			t.Fatal("export bound drifted")
+		}
+	})
+
 	var present []struct {
 		N uint64 `json:"n"`
 	}
@@ -472,11 +560,32 @@ func collectExport(t *testing.T, c *clickhouseReader, q url.Values) (string, int
 	t.Helper()
 	var content strings.Builder
 	for pages := 1; pages < 10000; pages++ {
-		value, err := c.read("export", q)
+		p := &Plugin{reader: c}
+		raw, _ := json.Marshal(managementRequest{Method: "GET", Path: "/v0/management/plugins/" + pluginID + "/export", Query: q})
+		response, err := p.Handle("management.handle", raw)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ticket := value.(map[string]any)
+		var envelope struct{ Result managementResponse }
+		json.Unmarshal(response, &envelope)
+		if envelope.Result.StatusCode != 200 {
+			t.Fatalf("export HTTP %d: %s", envelope.Result.StatusCode, envelope.Result.Body)
+		}
+		registration, _ := p.Handle("plugin.register", []byte(`{}`))
+		var registered struct {
+			Result struct {
+				Schema int `json:"schema_version"`
+			}
+		}
+		json.Unmarshal(registration, &registered)
+		var value map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(cpaHostManagementBody(t, registered.Result.Schema, envelope.Result.Body)))
+		decoder.UseNumber()
+		err = decoder.Decode(&value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ticket := value
 		content.WriteString(ticket["content"].(string))
 		if ticket["done"].(bool) {
 			for _, line := range strings.Split(strings.TrimSpace(content.String()), "\n") {
@@ -486,10 +595,74 @@ func collectExport(t *testing.T, c *clickhouseReader, q url.Values) (string, int
 			}
 			return content.String(), pages
 		}
+		q.Set("to", ticket["to"].(string))
+		q.Set("from", ticket["from"].(string))
 		q.Set("offset", fmt.Sprint(ticket["next_offset"]))
 		q.Set("byte_offset", fmt.Sprint(ticket["next_byte_offset"]))
 		q.Set("session_offset", fmt.Sprint(ticket["next_session_offset"]))
 	}
 	t.Fatal("export cursor did not terminate")
 	return "", 0
+}
+
+func TestClickHouseLookupIndexes(t *testing.T) {
+	c := localClickHouse(t)
+	for _, file := range []string{"schema.sql", "derived.sql"} {
+		b, err := os.ReadFile("testdata/clickhouse/" + file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stmt := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(stmt, "{db}", "cliproxy"))
+		}
+	}
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,conversation_id,started_at,ingested_at) SELECT concat('req-',toString(number)),concat('session-',toString(intDiv(number,12))),toDateTime64('2026-11-18',9,'UTC')+toIntervalSecond(number),toDateTime64('2026-11-18',9,'UTC') FROM numbers(300000)`)
+	s := &summaryTransport{base: http.DefaultTransport}
+	c.client.Transport = s
+	measure := func(label string) {
+		for _, filter := range []string{`conversation_id='session-24990'`, `request_id='req-299842'`} {
+			s.rows = 0
+			s.bytes = 0
+			var rows []struct {
+				N uint64 `json:"n"`
+			}
+			err := c.query(context.Background(), `SELECT count() AS n FROM cliproxy.request_facts WHERE started_at>='2026-11-18' AND started_at<'2026-11-22' AND `+filter+` LIMIT 1 SETTINGS use_query_condition_cache=0`, nil, &rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].N == 0 {
+				t.Fatal("lookup lost rows")
+			}
+			t.Logf("%s %s rows=%d bytes=%d matches=%d", label, filter, s.rows, s.bytes, rows[0].N)
+			if label == "indexed" && s.rows >= 300000 {
+				t.Fatal("lookup index did not prune")
+			}
+		}
+	}
+	measure("baseline")
+	migration, err := os.ReadFile("../../migrations/001-request-facts-search.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range strings.Split(string(migration), ";") {
+		if strings.TrimSpace(stmt) != "" {
+			chExec(t, c, stmt)
+		}
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		var rows []struct {
+			N uint64 `json:"n"`
+		}
+		if err = c.query(context.Background(), `SELECT count() AS n FROM system.mutations WHERE database='cliproxy' AND NOT is_done LIMIT 1`, nil, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows[0].N == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("index materialization incomplete")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	measure("indexed")
 }

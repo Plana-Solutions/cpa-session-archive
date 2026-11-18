@@ -149,3 +149,22 @@ func TestSearchQueryBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSearchTimeoutMessage(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if header {
+				w.Header().Set("X-ClickHouse-Exception-Code", "159")
+			}
+			w.WriteHeader(500)
+			w.Write([]byte("Code: 159. DB::Exception: private query TIMEOUT_EXCEEDED"))
+		}))
+		c := &clickhouseReader{config: pluginConfig{URL: server.URL}, client: server.Client()}
+		var rows []map[string]any
+		err := c.query(context.Background(), "SELECT 1", url.Values{"search": {"term"}}, &rows)
+		if err == nil || err.Error() != "search timed out, narrow the range" {
+			t.Fatalf("error %v", err)
+		}
+		server.Close()
+	}
+}

@@ -5,10 +5,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Export chunks are UTF-8 slices of complete JSONL records. The client concatenates them without parsing partial records.
 func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Values) (any, error) {
+	if now := time.Now().UTC(); w.to.After(now) {
+		w.to = now
+		w.params.Set("to", now.Format("2006-01-02 15:04:05.999999999"))
+	}
 	format := q.Get("format")
 	if format == "" {
 		format = "archive"
@@ -63,7 +68,7 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 	if q.Get("scope") == "all" {
 		name = "cpa-session-archive.all." + format + ".jsonl"
 	}
-	ticket := map[string]any{"filename": name, "content_type": "application/x-ndjson", "content": "", "done": len(sessions) == 0, "next_offset": offset, "next_byte_offset": 0, "next_session_offset": sessionIndex}
+	ticket := map[string]any{"filename": name, "content_type": "application/x-ndjson", "content": "", "done": len(sessions) == 0, "next_offset": offset, "next_byte_offset": 0, "next_session_offset": sessionIndex, "from": w.from.Format(time.RFC3339Nano), "to": w.to.Format(time.RFC3339Nano)}
 	if len(sessions) == 0 {
 		return ticket, nil
 	}
@@ -92,7 +97,7 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		Content string `json:"content"`
 		Length  int    `json:"length"`
 	}
-	err = c.query(ctx, `SELECT substringUTF8(line,{part:UInt32},262144) AS content,lengthUTF8(line) AS length FROM (`+recordsSQL+`) LIMIT 1`, w.params, &rows)
+	err = c.query(ctx, `SELECT substringUTF8(line,{part:UInt32},1048576) AS content,lengthUTF8(line) AS length FROM (`+recordsSQL+`) LIMIT 1`, w.params, &rows)
 	if err != nil {
 		return nil, err
 	}
@@ -102,11 +107,11 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		return ticket, nil
 	}
 	ticket["content"] = rows[0].Content
-	if part+262144 >= rows[0].Length {
+	if part+1048576 >= rows[0].Length {
 		ticket["content"] = rows[0].Content + "\n"
 		ticket["next_offset"] = offset + 1
 	} else {
-		ticket["next_byte_offset"] = part + 262144
+		ticket["next_byte_offset"] = part + 1048576
 	}
 	return ticket, nil
 }

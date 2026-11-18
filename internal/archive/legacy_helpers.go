@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -400,8 +402,47 @@ func meaningfulSummary(value string) string {
 	return compactSummary(meaningfulUserText(value))
 }
 
+var t3ContextBlock = regexp.MustCompile(`(?is)<t3_context\b[^>]*>.*?</t3_context>`)
+var assistantQuotePrefix = regexp.MustCompile(`(?i)^\[Assistant quote\]\((t3-citation://[^)]*)\)\s*`)
+var slashCommandTag = regexp.MustCompile(`(?is)<command-(name|args|message)>(.*?)</command-(?:name|args|message)>`)
+
 func meaningfulUserText(value string) string {
 	value = strings.TrimSpace(html.UnescapeString(value))
+	value = strings.TrimSpace(t3ContextBlock.ReplaceAllString(value, ""))
+	comments := []string{}
+	for {
+		match := assistantQuotePrefix.FindStringSubmatch(value)
+		if len(match) == 0 {
+			break
+		}
+		if citation, err := url.Parse(match[1]); err == nil {
+			if comment := citation.Query().Get("comment"); comment != "" {
+				comments = append(comments, comment)
+			}
+		}
+		value = strings.TrimSpace(strings.TrimPrefix(value, match[0]))
+	}
+	if value == "" {
+		value = strings.Join(comments, "\n")
+	}
+	if strings.HasPrefix(value, "Delegated task node:delegated-task:command") {
+		return ""
+	}
+	command, args := "", ""
+	for _, tag := range slashCommandTag.FindAllStringSubmatch(value, -1) {
+		switch strings.ToLower(tag[1]) {
+		case "name":
+			command = "/" + strings.TrimLeft(strings.TrimSpace(tag[2]), "/")
+		case "args":
+			args = strings.TrimSpace(tag[2])
+		}
+	}
+	if command != "" {
+		if args == "" {
+			args = meaningfulUserText(slashCommandTag.ReplaceAllString(value, ""))
+		}
+		return strings.TrimSpace(command + " " + args)
+	}
 	lower := strings.ToLower(value)
 	for _, marker := range []string{"\nuser prompt:\n", "\r\nuser prompt:\r\n", "\nuser message:\n", "\r\nuser message:\r\n"} {
 		if pos := strings.LastIndex(lower, marker); pos >= 0 {

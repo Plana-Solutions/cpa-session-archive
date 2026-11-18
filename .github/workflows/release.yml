@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.7.21-plana.1"; fi
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.8.0-plana.1"; fi
           (
             cd dist
             zip -X "cpa-session-archive_${version}_linux_arm64.zip" cpa-session-archive.so

@@ -125,6 +125,9 @@ func (c *clickhouseReader) query(ctx context.Context, sql string, params url.Val
 		return errors.New("ClickHouse result exceeds 8 MiB; narrow the range")
 	}
 	if resp.StatusCode != 200 {
+		if params.Get("search") != "" && (resp.Header.Get("X-ClickHouse-Exception-Code") == "159" || strings.Contains(string(body), "TIMEOUT_EXCEEDED")) {
+			return &archiveReadError{504, "search timed out, narrow the range"}
+		}
 		return fmt.Errorf("ClickHouse read failed (HTTP %d); check schema, reader access and result limits", resp.StatusCode)
 	}
 	// Decode only after the whole bounded response succeeds, so partial rows never appear as a complete page.
@@ -473,7 +476,7 @@ func (c *clickhouseReader) facets(ctx context.Context, w readWindow) (any, error
 func (c *clickhouseReader) insights(ctx context.Context, w readWindow, q url.Values) (Insights, error) {
 	out := Insights{From: w.from.Format(time.RFC3339Nano), To: w.to.Format(time.RFC3339Nano), GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), WindowDays: int(w.to.Sub(w.from).Hours()/24) + 1, Models: []ModelInsight{}, Daily: []DailyInsight{}}
 	var totals []InsightTotals
-	err := c.query(ctx, `SELECT count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='') + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,uniqExact(model) AS models FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` LIMIT 1`, w.params, &totals)
+	err := c.query(ctx, `SELECT count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='' AND NOT `+sideCall+`) + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,uniqExact(model) AS models FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` LIMIT 1`, w.params, &totals)
 	if err != nil {
 		return out, err
 	}
@@ -485,7 +488,7 @@ func (c *clickhouseReader) insights(ctx context.Context, w readWindow, q url.Val
 		return out, err
 	}
 	w.params.Set("minimum", strconv.Itoa(minimum))
-	err = c.query(ctx, `SELECT model,count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='') + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,if(turns>0,countIf(conversation_id!='')/turns,0) AS steps_per_turn,
+	err = c.query(ctx, `SELECT model,count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='' AND NOT `+sideCall+`) + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,if(turns>0,countIf(conversation_id!='')/turns,0) AS steps_per_turn,
  ifNotFinite(avgIf(duration_ms/1000,outcome='succeeded'),0) AS avg_latency_seconds,countIf(outcome IN ('failed','rejected'))/count() AS failure_rate,countIf(outcome='canceled')/count() AS cancel_rate
  FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` GROUP BY model HAVING requests >= {minimum:UInt32} ORDER BY requests DESC,model LIMIT 200`, w.params, &out.Models)
 	if err != nil {

@@ -2,9 +2,9 @@ const sessionID = "mock-session-long-content";
 const turnID = "mock-turn-long-content";
 const requestID = "mock-request-long-content";
 const escapedSummary =
-  "calibre 路径 &amp;#34;C:\\Books&amp;#34; 应显示为正常引号";
+  "calibre 路径 \"C:\\Books\" 应显示为正常引号";
 const escapedEnvironment =
-  "&amp;lt;environment_context&amp;gt;mock cwd&amp;lt;/environment_context&amp;gt;";
+  "<environment_context>mock cwd</environment_context>";
 const longUser =
   "You are an expert at upholding safety and compliance standards for Codex ambient suggestions. " +
   "用户要求：详情页必须能够读取完整命令，列表可以只显示摘要。" +

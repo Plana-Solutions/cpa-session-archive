@@ -87,7 +87,7 @@ func (p *Plugin) configure(raw []byte) ([]byte, error) {
 		{"Name": "clickhouse-user", "Type": "string", "Default": "inference_reader"},
 		{"Name": "clickhouse-password", "Type": "string", "Default": "", "Description": "Falls back to CLICKHOUSE_READER_PASSWORD."},
 	}
-	return ok(map[string]any{"schema_version": 5, "metadata": map[string]any{"Name": pluginID, "Version": Version, "Author": "OneTwo / Plana-Solutions", "GitHubRepository": "https://github.com/Plana-Solutions/cpa-session-archive", "ConfigFields": fields}, "capabilities": map[string]bool{"management_api": true}})
+	return ok(map[string]any{"schema_version": 7, "metadata": map[string]any{"Name": pluginID, "Version": Version, "Author": "OneTwo / Plana-Solutions", "GitHubRepository": "https://github.com/Plana-Solutions/cpa-session-archive", "ConfigFields": fields}, "capabilities": map[string]bool{"management_api": true}})
 }
 func (p *Plugin) Shutdown() {
 	p.mu.RLock()

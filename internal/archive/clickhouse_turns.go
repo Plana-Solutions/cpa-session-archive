@@ -34,7 +34,8 @@ const turnColumns = `f.request_id AS turn_id,conversation_id AS session_id,subst
 const conversationTraffic = `kind NOT IN ('count_tokens','models','embeddings')`
 const tailHasTool = `arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)`
 const tailHasUser = `arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)`
-const turnStart = `(NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `))`
+const sideCall = `(prior_seen AND input_items <= 2 AND length(tools_offered) <= 1)`
+const turnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 const turnUserText = `arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type)`
 
 // Keep turn identity shared by lists, detail and exports. A tool-result tail continues a Claude turn even when it includes user text.
@@ -43,13 +44,13 @@ const numberedTurns = `WITH steps AS (
  FROM {db:Identifier}.request_facts WHERE ` + timeFilter + ` AND conversation_id={session:String} AND ` + conversationTraffic + `
  WINDOW w AS (ORDER BY started_at,request_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
 ), numbered AS (
- SELECT *,sum(rn=1 OR if(turn_id!='',turn_id!=prev_codex,` + turnStart + `)) OVER (ORDER BY started_at,request_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM steps
+ SELECT *,sum(NOT ` + sideCall + ` AND (rn=1 OR if(turn_id!='',turn_id!=prev_codex,` + turnStart + `))) OVER (ORDER BY started_at,request_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM steps
 ), grouped AS (
- SELECT *,if(turn_id!='',turn_id,first_value(request_id) OVER (PARTITION BY turn_no ORDER BY started_at,request_id)) AS turn_key FROM numbered
+ SELECT *,first_value(if(turn_id!='',turn_id,request_id)) OVER (PARTITION BY turn_no ORDER BY started_at,request_id) AS turn_key FROM numbered WHERE turn_no>0
 ) `
 const groupedTurnColumns = `turn_key AS turn_id,any(conversation_id) AS session_id,
  argMin(request_id,(started_at,request_id)) AS title_request,
- substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!=''),1,12000) AS final_text,
+ substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!='' AND NOT ` + sideCall + `),1,12000) AS final_text,
  count() AS requests,min(started_at) AS first_at,max(addMilliseconds(started_at,f.duration_ms)) AS last_at,
  argMax(key_id,(started_at,request_id)) AS key_id,argMax(f.model,(started_at,request_id)) AS model,
  argMax(f.outcome,(started_at,request_id)) AS outcome,argMax(f.status_code,(started_at,request_id)) AS status_code,

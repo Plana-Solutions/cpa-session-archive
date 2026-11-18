@@ -1065,6 +1065,7 @@
               <div class="export-controls">
                 <button id="importedSourcesButton" data-i18n="importedSources" onclick="ExternalArchive.toggleSources(this)"></button>
                 <select id="allExportFormat"><option value="archive" data-i18n="archiveFormat"></option><option value="sft" data-i18n="sftFormat"></option></select>
+                <span class="muted" data-i18n="exportLimit"></span>
                 <button data-i18n="exportAll" onclick="downloadExport('all')"></button>
               </div>
             </details>
@@ -1260,6 +1261,7 @@
           backToRequest: "← 返回本次请求",
           exportSession: "下载当前 Session",
           exportAll: "下载全库",
+          exportLimit: "每次下载最多 64 MiB。",
           archiveFormat: "无损归档 JSONL",
           sftFormat: "后训练 SFT JSONL",
           newestFirst: "最新优先",
@@ -1272,6 +1274,7 @@
           loadingFull: "正在后台还原完整用户命令…",
           fullUnavailable: "暂时无法还原完整内容，请稍后重试。",
           loadingRequest: "正在按需加载完整请求、响应和工具结果…",
+          exportTooLarge: "导出超过 64 MiB 下载上限。请导出单个会话或选择 SFT 格式。",
           loadingExport: "正在准备可重复下载的流式链接…",
           firstPage: "首页",
           previousPage: "上一页",
@@ -1430,6 +1433,7 @@
           backToRequest: "← Back to this request",
           exportSession: "Download this session",
           exportAll: "Download all sessions",
+          exportLimit: "Downloads are limited to 64 MiB each.",
           archiveFormat: "Lossless archive JSONL",
           sftFormat: "Post-training SFT JSONL",
           newestFirst: "Newest first",
@@ -1444,6 +1448,7 @@
           fullUnavailable: "Complete content is temporarily unavailable. Try again shortly.",
           loadingRequest:
             "Loading the full request, response and tool results on demand…",
+          exportTooLarge: "Export exceeds the 64 MiB download limit. Export individual sessions or choose SFT format.",
           loadingExport: "Preparing a reusable streaming download link…",
           firstPage: "First",
           previousPage: "Previous",
@@ -2857,20 +2862,27 @@
         try {
           var query = new URLSearchParams({ scope: scope, format: format });
           if (scope === "session") query.set("id", detailSessionID);
-          var parts = [], ticket;
+          var parts = [], ticket, exportBytes = 0;
+          var exportLimit = 64 * 1024 * 1024;
           do {
             var response = await fetch(session.base + "/v0/management/plugins/cpa-session-archive/export?" + query,
               {headers:{Authorization:"Bearer "+session.key}});
             if(!response.ok) throw Error("HTTP "+response.status+": "+await response.text());
             ticket = await response.json();
-            if(ticket.content !== undefined) parts.push(ticket.content);
+            if(ticket.content !== undefined) {
+              var chunk = new TextEncoder().encode(ticket.content);
+              exportBytes += chunk.byteLength;
+              if (exportBytes > exportLimit) throw Error(t("exportTooLarge"));
+              parts.push(chunk);
+            }
+            if (ticket.to) query.set("to", ticket.to);
+            if (ticket.from) query.set("from", ticket.from);
             query.set("offset",ticket.next_offset || 0);
             query.set("byte_offset",ticket.next_byte_offset || 0);
             query.set("session_offset",ticket.next_session_offset || 0);
           } while(ticket.done === false);
-          if(ticket.content !== undefined) ticket.content=parts.join("");
           var url = ticket.content !== undefined
-            ? URL.createObjectURL(new Blob([ticket.content], {type: ticket.content_type}))
+            ? URL.createObjectURL(new Blob(parts, {type: ticket.content_type}))
             : new URL(ticket.url, session.base).href;
           if (ticket.content !== undefined) setTimeout(function () { URL.revokeObjectURL(url); }, 1800000);
           var notice = document.getElementById(
@@ -3798,15 +3810,7 @@
         await loadSessions();
       }
       function displayText(x) {
-        var value = String(x == null ? "" : x);
-        for (var pass = 0; pass < 4; pass++) {
-          var textarea = document.createElement("textarea");
-          textarea.innerHTML = value;
-          var decoded = textarea.value;
-          if (decoded === value) break;
-          value = decoded;
-        }
-        return value;
+        return String(x == null ? "" : x);
       }
       function titleText(x) {
         var text = displayText(x);

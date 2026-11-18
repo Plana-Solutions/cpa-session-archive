@@ -103,10 +103,14 @@ test("system instructions and diagnostics are routed and loaded on demand", asyn
 test("bounded session export exposes a reusable JSONL download", async ({
   page,
 }) => {
+  const exportError = new Promise((resolve, reject) => {
+    page.on("dialog", async dialog => { const message = dialog.message(); await dialog.dismiss(); reject(new Error(message)); });
+    page.on("pageerror", reject);
+  });
   await page.locator(".session-row").first().click();
   const sessionDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载当前 Session" }).click();
-  const downloaded = await sessionDownload;
+  const downloaded = await Promise.race([sessionDownload, exportError]);
   expect(downloaded.suggestedFilename()).toBe(
     "session.archive.jsonl",
   );
@@ -128,7 +132,7 @@ test("bounded session export exposes a reusable JSONL download", async ({
   await page.locator("#allExportFormat").selectOption("sft");
   const allDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载全库" }).click();
-  expect((await allDownload).suggestedFilename()).toBe(
+  expect((await Promise.race([allDownload, exportError])).suggestedFilename()).toBe(
     "cpa-session-archive.all.sft.jsonl",
   );
   await expect(page.locator("#allDownloadNotice a")).toHaveText(
@@ -346,4 +350,43 @@ test("a late session page cannot wipe the open turn's expandable text", async ({
 test("a session deep link with a trailing slash still renders its turns", async ({ page }) => {
   await page.goto("/#/sessions/mock-session-long-content/");
   await expect(page.locator(".turn-card").first()).toBeVisible();
+});
+
+test("literal HTML entities survive display and export pages reuse the first bound", async ({page}) => {
+  expect(await page.evaluate(() => displayText("literal &amp; &#34; &lt;tag&gt;"))).toBe("literal &amp; &#34; &lt;tag&gt;");
+  const requests = [];
+  await page.route("**/cpa-session-archive/export?*", async route => {
+    const query = new URL(route.request().url()).searchParams;
+    requests.push(Object.fromEntries(query));
+    await route.fulfill({json: {filename: "pinned.jsonl", content_type: "application/x-ndjson",
+      content: requests.length === 1 ? '{"text":"literal &amp;"}\n' : '',
+      from: "2026-11-01T00:00:00Z", to: "2026-11-18T12:34:56.123Z",
+      next_offset: 1, done: requests.length > 1}});
+  });
+  await page.locator(".session-row").first().click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", {name: "下载当前 Session"}).click();
+  const content = require("node:fs").readFileSync(await (await download).path(), "utf8");
+  expect(JSON.parse(content).text).toBe("literal &amp;");
+  expect(requests).toHaveLength(2);
+  expect(requests[1].from).toBe("2026-11-01T00:00:00Z");
+  expect(requests[1].to).toBe("2026-11-18T12:34:56.123Z");
+});
+
+test("downloads stop at the memory cap with a clear error", async ({page}) => {
+  let calls = 0;
+  await page.route("**/cpa-session-archive/export?*", async route => {
+    calls++;
+    await route.fulfill({json: {filename: "large.jsonl", content: "x".repeat(33 * 1024 * 1024),
+      next_offset: calls, done: false}});
+  });
+  const dialog = page.waitForEvent("dialog");
+  await page.locator(".archive-actions > summary").click();
+  await expect(page.locator(".archive-actions .export-controls")).toContainText("64 MiB");
+  await page.getByRole("button", {name:"下载全库"}).click();
+  const error = await dialog;
+  expect(error.message()).toContain("64 MiB");
+  await error.dismiss();
+  expect(calls).toBe(2);
+  await expect(page.locator("#allDownloadNotice a")).toHaveCount(0);
 });

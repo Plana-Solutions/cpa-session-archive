@@ -12,13 +12,16 @@ import (
 func firstUserText(texts []string) (string, bool) {
 	continued := false
 	first := ""
+	commandFallback := false
 	for _, text := range texts {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "this session is being continued from a previous conversation") {
 			continued = true
 			continue
 		}
-		if first == "" {
-			first = meaningfulUserText(text)
+		candidate := meaningfulUserText(text)
+		if first == "" || (commandFallback && candidate != "") {
+			first = candidate
+			commandFallback = strings.Contains(strings.ToLower(text), "<command-name>") && !strings.Contains(candidate, " ")
 		}
 	}
 	return first, continued
@@ -63,7 +66,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 			var matches []struct {
 				ID string `json:"id"`
 			}
-			err := c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND ((turn_id='' AND `+turnStart+`) OR turn_id!='') WHERE lowerUTF8(last_user_text) LIKE {search_pattern:String} GROUP BY conversation_id LIMIT 1000000`, w.params, &matches)
+			err := c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+turnStart+` WHERE lowerUTF8(last_user_text) LIKE {search_pattern:String} GROUP BY conversation_id LIMIT 1000000`, w.params, &matches)
 			ids := []string{}
 			for _, row := range matches {
 				ids = append(ids, row.ID)
@@ -104,7 +107,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		var matches []struct {
 			ID string `json:"id"`
 		}
-		err = c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND ((turn_id='' AND `+turnStart+`) OR turn_id!='') WHERE lowerUTF8(last_user_text) LIKE {search_pattern:String} GROUP BY conversation_id LIMIT {candidates:UInt32}`, w.params, &matches)
+		err = c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+turnStart+` WHERE lowerUTF8(last_user_text) LIKE {search_pattern:String} GROUP BY conversation_id LIMIT {candidates:UInt32}`, w.params, &matches)
 		if err != nil {
 			return nil, err
 		}
