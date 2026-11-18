@@ -83,9 +83,17 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		if format == "sft" {
 			externalFilter = " AND type NOT IN ('reasoning','thinking')"
 		}
-		err = c.query(ctx, `SELECT `+externalColumns+` FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
+		err = c.query(ctx, `SELECT `+strings.TrimSuffix(externalColumns, ",text")+` FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
 		if err != nil {
 			return nil, err
+		}
+		if len(rows) > 0 {
+			w.params.Set("position", strconv.FormatUint(uint64(rows[0].Position), 10))
+			text, e := c.rawBytes(ctx, w, "text", ` FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String} AND position={position:UInt32}`)
+			if e != nil {
+				return nil, e
+			}
+			rows[0].Text = string(text)
 		}
 		if len(rows) == 0 {
 			endSession = true

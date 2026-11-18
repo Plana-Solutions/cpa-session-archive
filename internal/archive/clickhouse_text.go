@@ -125,21 +125,50 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 	found := map[string]bool{}
 	ids := []string{}
 	p := cloneValues(w.params)
-	for offset := 0; offset < 1000000; offset += 8 {
-		p.Set("text_offset", strconv.Itoa(offset))
+	seek := ""
+	for scanned := 0; scanned < 1000000; {
 		var rows []struct {
-			ID         string    `json:"id"`
-			RequestID  string    `json:"request_id"`
-			StartedAt  time.Time `json:"started_at"`
-			Incomplete uint8     `json:"incomplete"`
-			Texts      []string  `json:"texts"`
+			ID        string    `json:"id"`
+			RequestID string    `json:"request_id"`
+			StartedAt time.Time `json:"started_at"`
+			Bytes     uint64    `json:"bytes"`
 		}
-		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,arraySum(arrayMap(x->length(x),`+userTextItems+`))>100000 AS incomplete,if(incomplete,[],`+userTextItems+`) AS texts FROM {db:Identifier}.request_facts PREWHERE `+where+` ORDER BY started_at DESC,request_id LIMIT 8 OFFSET {text_offset:UInt32} SETTINGS max_threads=1,max_block_size=8`, p, &rows)
+		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,length(toJSONString(`+userTextItems+`)) AS bytes FROM {db:Identifier}.request_facts PREWHERE `+where+seek+` ORDER BY started_at DESC,request_id DESC LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &rows)
 		if err != nil {
 			return nil, err
 		}
+		if len(rows) == 0 {
+			return ids, nil
+		}
+		batch := 0
+		bytes := uint64(0)
+		keys := []string{}
 		for _, row := range rows {
-			if row.Incomplete != 0 {
+			if row.Bytes <= 1<<20 {
+				if bytes+row.Bytes > 1<<20 {
+					break
+				}
+				bytes += row.Bytes
+				keys = append(keys, row.RequestID)
+			}
+			batch++
+		}
+		texts := map[string][]string{}
+		if len(keys) > 0 {
+			encoded, _ := json.Marshal(keys)
+			p.Set("text_ids", string(encoded))
+			var values []displayText
+			err = c.query(ctx, `SELECT request_id,`+userTextItems+` AS texts FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND request_id IN (SELECT arrayJoin(JSONExtract({text_ids:String},'Array(String)'))) LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &values)
+			if err != nil {
+				return nil, err
+			}
+			for _, value := range values {
+				texts[value.RequestID] = value.Texts
+			}
+		}
+		for _, row := range rows[:batch] {
+			items := texts[row.RequestID]
+			if row.Bytes > 1<<20 {
 				full := cloneValues(w.params)
 				full.Set("from", row.StartedAt.Format("2006-01-02 15:04:05.999999999"))
 				full.Set("to", row.StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
@@ -148,19 +177,24 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 				if err != nil {
 					return nil, err
 				}
-				if err = json.Unmarshal(data, &row.Texts); err != nil {
+				if err = json.Unmarshal(data, &items); err != nil {
 					return nil, err
 				}
 			}
-			text, _ := firstUserText(row.Texts)
+			text, _ := firstUserText(items)
 			if !found[row.ID] && strings.Contains(strings.ToLower(text), strings.ToLower(p.Get("search"))) {
 				found[row.ID] = true
 				ids = append(ids, row.ID)
 			}
 		}
-		if len(rows) < 8 || len(ids) >= wanted {
+		if (batch == len(rows) && len(rows) < 512) || len(ids) >= wanted {
 			return ids, nil
 		}
+		last := rows[batch-1]
+		p.Set("text_before", last.StartedAt.Format("2006-01-02 15:04:05.999999999"))
+		p.Set("text_before_id", last.RequestID)
+		seek = ` AND (started_at,request_id)<({text_before:DateTime64(9,'UTC')},{text_before_id:String})`
+		scanned += batch
 	}
 	return ids, nil
 }
