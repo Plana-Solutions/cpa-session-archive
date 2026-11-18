@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -201,6 +202,38 @@ func TestClickHouseRound5(t *testing.T) {
 		}
 	})
 
+	t.Run("large native export uses bounded reads", func(t *testing.T) {
+		text := strings.Repeat("x", 9<<20) + "END-OF-NATIVE-EVENT"
+		at := base.Format("2006-01-02 15:04:05.999999999")
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "large-native", "ts": at, "position": 0, "role": "user", "type": "message", "text": "question"}, map[string]any{"session_id": "large-native", "ts": at, "position": 1, "role": "assistant", "type": "message", "text": text})
+		event := externalMessage{SessionID: "large-native", TS: base, Position: 1, Role: "assistant", Type: "message", Text: text}
+		body, _ := json.Marshal(event)
+		archive, _ := json.Marshal(map[string]any{"request_id": "external:large-native:1", "session_id": "external:large-native", "source_format": "external-native-event", "started_at": base, "completed_at": base, "original_request": body, "response": []byte{}})
+		message, _ := json.Marshal(map[string]string{"role": "assistant", "content": text})
+		for format, expected := range map[string]string{"archive": string(archive), "sft": "," + string(message)} {
+			q := url.Values{"id": {"external:large-native"}, "format": {format}, "offset": {"1"}}
+			got, err := c.read("export", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(expected, got.(map[string]any)["content"].(string)) {
+				t.Fatal("native first chunk differs")
+			}
+			q.Set("byte_offset", fmt.Sprint(len(expected)-256))
+			got, err = c.read("export", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			suffix := expected[len(expected)-256:]
+			if format == "archive" {
+				suffix += "\n"
+			}
+			if got.(map[string]any)["content"] != suffix {
+				t.Fatal("native final chunk differs")
+			}
+		}
+	})
+
 }
 
 func TestTrainingSkipsThinkingBlocks(t *testing.T) {
@@ -209,4 +242,35 @@ func TestTrainingSkipsThinkingBlocks(t *testing.T) {
 	if strings.Contains(string(b), "PRIVATE") || !strings.Contains(string(b), "answer") {
 		t.Fatalf("nonconversational content in SFT: %s", b)
 	}
+}
+
+type searchRequestBudget struct{ n int }
+
+func (s *searchRequestBudget) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.n++
+	if s.n > 100 {
+		return nil, fmt.Errorf("search exceeded 100 HTTP requests")
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func TestClickHouseSearchRequestBudget(t *testing.T) {
+	c := localClickHouse(t)
+	for _, file := range []string{"schema.sql", "derived.sql"} {
+		b, _ := os.ReadFile("testdata/clickhouse/" + file)
+		for _, sql := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
+		}
+	}
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,conversation_id,started_at,ingested_at,msg_direction,msg_role,msg_type,msg_text) SELECT concat('search-',toString(number)),concat('conversation-',toString(number)),now64(9)-INTERVAL 1 HOUR,now64(9),['input'],['user'],['message'],['ordinary short prompt'] FROM numbers(20000)`)
+	budget := &searchRequestBudget{}
+	c.client.Transport = budget
+	got, err := c.read("sessions", url.Values{"q": {"absent-needle"}})
+	if err != nil {
+		t.Fatalf("bounded absent search failed after %d requests: %v", budget.n, err)
+	}
+	if len(got.([]archiveSession)) != 0 {
+		t.Fatal("absent term returned a match")
+	}
+	t.Logf("20000 turn starts, absent result, HTTP requests=%d", budget.n)
 }
