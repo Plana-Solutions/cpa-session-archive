@@ -233,9 +233,12 @@ func TestClickHouseRound5(t *testing.T) {
 			}
 		}
 		t.Run("native turn preview", func(t *testing.T) {
-			got, err := c.read("turns", url.Values{"session_id": {"external:large-native"}, "turn_id": {"0"}})
+			got, err := c.read("turns", url.Values{"session_id": {"external:large-native"}, "turn_id": {"0"}, "limit": {"1000"}})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if got.(map[string]any)["limit"] != 160 {
+				t.Fatal("native detail page is not bounded")
 			}
 			records := got.(map[string]any)["records"].([]RequestTimelineView)
 			if len(records) != 2 || !records[1].Entries[0].Truncated || len([]rune(records[1].Entries[0].Text)) > 4000 {
@@ -271,6 +274,17 @@ func TestClickHouseRound5(t *testing.T) {
 			}
 			if got.(map[string]string)["text"] != text {
 				t.Fatal("native user text lost content")
+			}
+		})
+
+		t.Run("proxy complete turn text", func(t *testing.T) {
+			seed("large-proxy-turn", "large-proxy-turn", 90, 200, `{}`, `{}`, map[string]any{"msg_text": []string{text, "answer"}})
+			got, err := c.read("turn-text", url.Values{"session_id": {"large-proxy-turn"}, "turn_id": {"large-proxy-turn"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(map[string]string)["text"] != text {
+				t.Fatal("proxy user text lost content")
 			}
 		})
 
