@@ -2,12 +2,15 @@ package archive
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Plana-Solutions/cpa-clickhouse-sink/bodystore"
 )
 
 type clickhouseTurn struct {
@@ -362,6 +365,9 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		return view, nil
 	}
 	if endpoint == "request-context" {
+		if _, err = c.rawRequest(ctx, w, t); err != nil {
+			return nil, err
+		}
 		w.params.Set("session", t.SessionID)
 		if q.Get("call_id") == "" {
 			return nil, badQuery("call_id is required")
@@ -370,15 +376,23 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		w.params.Set("start", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
 		w.params.Set("limit", strconv.Itoa(min(limit, 32)))
 		var messages []struct {
-			CallID string `json:"call_id"`
-			Text   string `json:"text"`
+			RequestID string `json:"request_id"`
+			CallID    string `json:"call_id"`
+			Text      string `json:"text"`
 		}
-		err = c.query(ctx, `SELECT call_id,substring(text,1,64000) AS text FROM {db:Identifier}.messages WHERE conversation_id={session:String} AND started_at > {start:DateTime64(9,'UTC')} AND started_at < {start:DateTime64(9,'UTC')} + INTERVAL 1 DAY AND call_id={call:String} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
+		err = c.query(ctx, `SELECT request_id,call_id,substring(text,1,64000) AS text FROM {db:Identifier}.messages WHERE conversation_id={session:String} AND started_at > {start:DateTime64(9,'UTC')} AND started_at < {start:DateTime64(9,'UTC')} + INTERVAL 1 DAY AND call_id={call:String} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}
 		output := []map[string]string{}
 		for _, m := range messages {
+			cw := w
+			cw.params = cloneValues(w.params)
+			cw.params.Set("from", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
+			cw.params.Set("to", t.FirstAt.Add(24*time.Hour).Format("2006-01-02 15:04:05.999999999"))
+			if _, err = c.rawRequest(ctx, cw, clickhouseTurn{TurnSummary: TurnSummary{TurnID: m.RequestID, SessionID: t.SessionID}}); err != nil {
+				return nil, err
+			}
 			output = append(output, map[string]string{"type": "function_call_output", "call_id": m.CallID, "output": m.Text})
 		}
 		body, _ := json.Marshal(map[string]any{"output": output})
@@ -387,8 +401,20 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 	return c.rawRequest(ctx, w, t)
 }
 
-// Keep raw storage reads here so a future lossless body format changes one boundary.
+// All raw consumers share body reconstruction and integrity checks.
 func (c *clickhouseReader) rawRequest(ctx context.Context, w readWindow, t clickhouseTurn) (Record, error) {
+	w.params.Set("id", t.TurnID)
+	dedup, err := c.hasBodyStorage(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	order := ""
+	projection := ""
+	if dedup {
+		order = " ORDER BY request_body='' DESC"
+		projection = ",lineage,body_len,hex(body_sha256) AS body_sha,body_ref_offsets,arrayMap(x->hex(x),body_refs) AS body_hashes"
+	}
+	from := ` FROM (SELECT * FROM {db:Identifier}.requests WHERE ` + timeFilter + ` AND request_id={id:String}` + order + ` LIMIT 1)`
 	var rows []struct {
 		RequestID      string    `json:"request_id"`
 		TraceID        string    `json:"trace_id"`
@@ -398,11 +424,9 @@ func (c *clickhouseReader) rawRequest(ctx context.Context, w readWindow, t click
 		Error          string    `json:"error"`
 		StartedAt      time.Time `json:"started_at"`
 		CompletedAt    time.Time `json:"completed_at"`
-		RequestBody    string    `json:"request_body"`
-		ResponseBody   string    `json:"response_body"`
-		ResponseChunks []string  `json:"response_chunks"`
+		bodystore.Body
 	}
-	err := c.query(ctx, `SELECT request_id,trace_id,source_format,requested_model,stream,error,started_at,completed_at,request_body,response_body,response_chunks FROM {db:Identifier}.requests WHERE `+timeFilter+` AND request_id={id:String} LIMIT 1`, w.params, &rows)
+	err = c.query(ctx, `SELECT request_id,trace_id,source_format,requested_model,stream,error,started_at,completed_at`+projection+from+` LIMIT 1 SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
 	if err != nil {
 		return Record{}, err
 	}
@@ -410,9 +434,35 @@ func (c *clickhouseReader) rawRequest(ctx context.Context, w readWindow, t click
 		return Record{}, archiveNotFound
 	}
 	r := rows[0]
-	response := r.ResponseBody
-	if response == "" {
-		response = strings.Join(r.ResponseChunks, "")
+	inline, err := c.rawBytes(ctx, w, "request_body", from)
+	if err != nil {
+		return Record{}, err
 	}
-	return Record{RequestID: r.RequestID, TraceID: r.TraceID, SessionID: t.SessionID, KeyID: t.KeyID, Summary: t.UserText, Model: t.Model, RequestedModel: r.RequestedModel, SourceFormat: r.SourceFormat, Stream: r.Stream, Outcome: t.Outcome, StatusCode: t.StatusCode, Error: r.Error, StartedAt: r.StartedAt, CompletedAt: r.CompletedAt, OriginalRequest: []byte(r.RequestBody), Response: []byte(response)}, nil
+	body := inline
+	if dedup {
+		r.Body.Inline = base64.StdEncoding.EncodeToString(inline)
+		if len(r.Refs) > 65536 || r.Length > maxRawBody {
+			return Record{}, bodystore.ErrIncomplete
+		}
+		r.Residual, err = c.rawBytes(ctx, w, "body_residual", from)
+		if err != nil {
+			return Record{}, err
+		}
+		blobs := map[bodystore.Key][]byte{}
+		if len(inline) == 0 && len(r.Refs) > 0 {
+			blobs, err = c.bodyBlobs(ctx, w, r.Body)
+			if err != nil {
+				return Record{}, err
+			}
+		}
+		body, err = r.Body.Restore(blobs)
+		if err != nil {
+			return Record{}, bodystore.ErrIncomplete
+		}
+	}
+	response, err := c.rawBytes(ctx, w, "if(response_body!='',response_body,arrayStringConcat(response_chunks,''))", from)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{RequestID: r.RequestID, TraceID: r.TraceID, SessionID: t.SessionID, KeyID: t.KeyID, Summary: t.UserText, Model: t.Model, RequestedModel: r.RequestedModel, SourceFormat: r.SourceFormat, Stream: r.Stream, Outcome: t.Outcome, StatusCode: t.StatusCode, Error: r.Error, StartedAt: r.StartedAt, CompletedAt: r.CompletedAt, OriginalRequest: body, Response: response}, nil
 }

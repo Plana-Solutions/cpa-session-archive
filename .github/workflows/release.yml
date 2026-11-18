@@ -11,7 +11,7 @@ permissions:
 jobs:
   binaries:
     runs-on: depot-ubuntu-24.04-arm-4
-    container: golang:1.24-bookworm
+    container: golang:1.26-bookworm
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

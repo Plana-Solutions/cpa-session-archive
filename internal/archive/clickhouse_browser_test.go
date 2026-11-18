@@ -20,57 +20,7 @@ func TestClickHouseBrowserServer(t *testing.T) {
 	}
 	c := localClickHouse(t)
 	c.client.Transport = browserFixtureTransport{}
-	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
-		b, err := os.ReadFile("testdata/clickhouse/" + file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, stmt := range strings.Split(string(b), "\n;\n") {
-			chExec(t, c, strings.ReplaceAll(stmt, "{db}", "cliproxy"))
-		}
-	}
-	b, err := exec.Command("node", "../../e2e/fixture-source.cjs").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var source struct {
-		LongUser, LongAssistant, LongSystem, LongToolOutput, EscapedSummary, EscapedEnvironment string
-		OriginalRequest, OriginalResponse                                                       json.RawMessage
-	}
-	if err = json.Unmarshal(b, &source); err != nil {
-		t.Fatal(err)
-	}
-	base := time.Now().UTC().Add(-time.Hour)
-	models := []string{"gpt-6.1-sol", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-6-astra", "gemini-3-pro", "kimi-k3"}
-	for m, model := range models {
-		n := 20
-		if m == 0 {
-			n = 41
-		}
-		for i := 0; i < n; i++ {
-			id := fmt.Sprintf("step-%d-%d", m, i)
-			if m == 0 && i == 0 {
-				id = "mock-request-long-content"
-			}
-			at := base.Add(time.Duration(m*100+i) * time.Second).Format("2006-01-02 15:04:05.999999999")
-			session, turn := "", ""
-			if m == 0 {
-				session = "mock-session-long-content"
-				turn = "mock-turn-long-content"
-			}
-			chInsert(t, c, "requests", map[string]any{"request_id": id, "trace_id": id, "started_at": at, "completed_at": at, "model": model, "requested_model": "gpt-5.6-sol", "request_body": string(source.OriginalRequest), "response_body": string(source.OriginalResponse), "outcome": "succeeded", "status_code": 200})
-			user := source.EscapedSummary + " mock-long-project " + source.EscapedEnvironment + " " + source.LongUser
-			chInsert(t, c, "request_facts", map[string]any{"request_id": id, "started_at": at, "ingested_at": at, "conversation_id": session, "turn_id": turn, "prior_seen": i > 0, "model": model, "client": "codex", "kind": "responses", "request_kind": "turn", "outcome": "succeeded", "status_code": 200, "last_user_text": user, "reply_text": source.LongAssistant, "reasoning_text": source.LongAssistant, "duration_ms": 2500, "input_items": 200, "tools_offered": []string{"shell_command"}, "tools_called": []string{"shell_command"}, "msg_direction": []string{"input", "input", "output", "output", "output"}, "msg_position": []int{0, 1, 0, 1, 2}, "msg_role": []string{"system", "user", "assistant", "tool", "assistant"}, "msg_type": []string{"message", "message", "function_call", "function_call_output", "message"}, "msg_text": []string{source.LongSystem, user, "", source.LongToolOutput, source.LongAssistant}, "msg_tool_name": []string{"", "", "shell_command", "shell_command", ""}, "msg_call_id": []string{"", "", "call-long-output", "call-long-output", ""}, "msg_arguments": []string{"", "", `{"command":"printf fixture"}`, "", ""}, "msg_is_error": []bool{false, false, false, false, false}, "msg_text_hash": []int{0, 0, 0, 0, 0}})
-			chInsert(t, c, "usage", map[string]any{"request_id": id, "trace_id": id, "requested_at": at, "api_key_hash": "mock-key-hash", "input_tokens": 10, "total_tokens": 12})
-		}
-	}
-	for i, role := range []string{"user", "assistant"} {
-		text := "Native prompt"
-		if i == 1 {
-			text = "Native answer"
-		}
-		chInsert(t, c, "external_messages", map[string]any{"session_id": "imported-session", "source": "claude-import", "title": "Imported native transcript", "project": "mock-long-project", "position": i + 1, "role": role, "type": "message", "text": text, "ts": base.Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")})
-	}
+	seedBrowserFixture(t, c)
 	p := &Plugin{reader: c}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -124,4 +74,59 @@ func (s browserFixtureTransport) RoundTrip(r *http.Request) (*http.Response, err
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	return resp, err
+}
+
+func seedBrowserFixture(t *testing.T, c *clickhouseReader) {
+	t.Helper()
+	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
+		b, err := os.ReadFile("testdata/clickhouse/" + file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stmt := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(stmt, "{db}", "cliproxy"))
+		}
+	}
+	b, err := exec.Command("node", "../../e2e/fixture-source.cjs").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source struct {
+		LongUser, LongAssistant, LongSystem, LongToolOutput, EscapedSummary, EscapedEnvironment string
+		OriginalRequest, OriginalResponse                                                       json.RawMessage
+	}
+	if err = json.Unmarshal(b, &source); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	models := []string{"gpt-6.1-sol", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-6-astra", "gemini-3-pro", "kimi-k3"}
+	for m, model := range models {
+		n := 20
+		if m == 0 {
+			n = 41
+		}
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("step-%d-%d", m, i)
+			if m == 0 && i == 0 {
+				id = "mock-request-long-content"
+			}
+			at := base.Add(time.Duration(m*100+i) * time.Second).Format("2006-01-02 15:04:05.999999999")
+			session, turn := "", ""
+			if m == 0 {
+				session = "mock-session-long-content"
+				turn = "mock-turn-long-content"
+			}
+			chInsert(t, c, "requests", map[string]any{"request_id": id, "trace_id": id, "started_at": at, "completed_at": at, "model": model, "requested_model": "gpt-5.6-sol", "request_body": string(source.OriginalRequest), "response_body": string(source.OriginalResponse), "outcome": "succeeded", "status_code": 200})
+			user := source.EscapedSummary + " mock-long-project " + source.EscapedEnvironment + " " + source.LongUser
+			chInsert(t, c, "request_facts", map[string]any{"request_id": id, "started_at": at, "ingested_at": at, "conversation_id": session, "turn_id": turn, "prior_seen": i > 0, "model": model, "client": "codex", "kind": "responses", "request_kind": "turn", "outcome": "succeeded", "status_code": 200, "last_user_text": user, "reply_text": source.LongAssistant, "reasoning_text": source.LongAssistant, "duration_ms": 2500, "input_items": 200, "tools_offered": []string{"shell_command"}, "tools_called": []string{"shell_command"}, "msg_direction": []string{"input", "input", "output", "output", "output"}, "msg_position": []int{0, 1, 0, 1, 2}, "msg_role": []string{"system", "user", "assistant", "tool", "assistant"}, "msg_type": []string{"message", "message", "function_call", "function_call_output", "message"}, "msg_text": []string{source.LongSystem, user, "", source.LongToolOutput, source.LongAssistant}, "msg_tool_name": []string{"", "", "shell_command", "shell_command", ""}, "msg_call_id": []string{"", "", "call-long-output", "call-long-output", ""}, "msg_arguments": []string{"", "", `{"command":"printf fixture"}`, "", ""}, "msg_is_error": []bool{false, false, false, false, false}, "msg_text_hash": []int{0, 0, 0, 0, 0}})
+			chInsert(t, c, "usage", map[string]any{"request_id": id, "trace_id": id, "requested_at": at, "api_key_hash": "mock-key-hash", "input_tokens": 10, "total_tokens": 12})
+		}
+	}
+	for i, role := range []string{"user", "assistant"} {
+		text := "Native prompt"
+		if i == 1 {
+			text = "Native answer"
+		}
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "imported-session", "source": "claude-import", "title": "Imported native transcript", "project": "mock-long-project", "position": i + 1, "role": role, "type": "message", "text": text, "ts": base.Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")})
+	}
 }

@@ -36,7 +36,21 @@ func localClickHouse(t *testing.T) *clickhouseReader {
 	}
 	httpPort, tcpPort := port(), port()
 	dir := t.TempDir()
-	config := fmt.Sprintf(`<clickhouse><listen_host>127.0.0.1</listen_host><http_port>%d</http_port><tcp_port>%d</tcp_port><path>%s/data/</path><tmp_path>%s/tmp/</tmp_path><max_server_memory_usage>2147483648</max_server_memory_usage><max_thread_pool_size>256</max_thread_pool_size><background_pool_size>4</background_pool_size><background_schedule_pool_size>4</background_schedule_pool_size><background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size><background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size><background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size><merge_tree><number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition><number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge><number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation></merge_tree><logger><level>information</level><console>true</console></logger><users><default><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks><profile>default</profile><quota>default</quota></default></users><profiles><default><max_threads>2</max_threads></default></profiles><quotas><default/></quotas></clickhouse>`, httpPort, tcpPort, dir, dir)
+	config := fmt.Sprintf(`<clickhouse><listen_host>127.0.0.1</listen_host><http_port>%d</http_port><tcp_port>%d</tcp_port><path>%s/data/</path><tmp_path>%s/tmp/</tmp_path><max_server_memory_usage>1610612736</max_server_memory_usage><max_thread_pool_size>256</max_thread_pool_size><background_pool_size>4</background_pool_size><background_schedule_pool_size>4</background_schedule_pool_size><background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size><background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size><background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size><merge_tree><number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition><number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge><number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation></merge_tree><query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>100</flush_interval_milliseconds></query_log><logger><level>information</level><console>true</console></logger><users><default><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks><profile>default</profile><quota>default</quota></default></users><profiles><default><max_threads>2</max_threads></default></profiles><quotas><default/></quotas></clickhouse>`, httpPort, tcpPort, dir, dir)
+	if err := os.Mkdir(filepath.Join(dir, "users.d"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	profile := `<clickhouse><profiles><inference_reader><readonly>2</readonly><max_memory_usage>536870912</max_memory_usage><max_execution_time>60</max_execution_time><max_result_bytes>8388608</max_result_bytes><result_overflow_mode>throw</result_overflow_mode><log_queries>1</log_queries></inference_reader></profiles><users><inference_reader><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks><profile>inference_reader</profile><quota>default</quota></inference_reader></users></clickhouse>`
+	if err := os.WriteFile(filepath.Join(dir, "users.d", "inference-reader.xml"), []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	usersStart := strings.Index(config, "<users>")
+	usersEnd := strings.Index(config, "</quotas>") + len("</quotas>")
+	users := config[usersStart:usersEnd]
+	if err := os.WriteFile(filepath.Join(dir, "users.xml"), []byte("<clickhouse>"+users+"</clickhouse>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config = config[:usersStart] + "<users_config>" + filepath.Join(dir, "users.xml") + "</users_config>" + config[usersEnd:]
 	conf := filepath.Join(dir, "config.xml")
 	if err := os.WriteFile(conf, []byte(config), 0600); err != nil {
 		t.Fatal(err)
@@ -83,7 +97,7 @@ func localClickHouse(t *testing.T) *clickhouseReader {
 		b, _ := os.ReadFile(logFile.Name())
 		t.Fatalf("ClickHouse not ready: %s", b)
 	}
-	c := &clickhouseReader{config: pluginConfig{URL: endpoint, Database: "cliproxy", User: "default"}, client: &http.Client{Timeout: 60 * time.Second}}
+	c := &clickhouseReader{config: pluginConfig{URL: endpoint, Database: "cliproxy", User: "inference_reader"}, client: &http.Client{Timeout: 60 * time.Second}}
 	return c
 }
 func chExec(t *testing.T, c *clickhouseReader, sql string) {
