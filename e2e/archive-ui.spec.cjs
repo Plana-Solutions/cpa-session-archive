@@ -109,7 +109,7 @@ test("bounded session export exposes a reusable JSONL download", async ({
   });
   page.on("response",async response=>{
     if(response.url().includes("/export?")) {
-      console.log("EXPORT",response.status(),response.url());
+      console.log("EXPORT",Date.now(),response.status(),response.url());
       if(!response.ok()) console.log("EXPORT ERROR",await response.text());
     }
   });

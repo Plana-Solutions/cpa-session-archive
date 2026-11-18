@@ -26,7 +26,7 @@ jobs:
       - run: go test ./...
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps --only-shell chromium
-      - run: bun run test:e2e --grep 'bounded session export'
+      - run: bun run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
