@@ -50,9 +50,11 @@ test('truncated native events offer full stored diagnostics', async ({ page }) =
   await page.evaluate(() => {
     showSubDetail();
     document.querySelector('#subDetail').innerHTML = ExternalArchive.renderEntry({
-      role: 'assistant', direction: 'input', text: 'short native preview', truncated: true,
-    });
+      role: 'tool_call', label: 'shell', call_id: 'native-call', direction: 'input', text: 'short native preview', truncated: true,
+    }, 'external:large-native:1');
   });
   await expect(page.locator('#subDetail button')).toBeVisible();
-  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request')");
+  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request',decodeURIComponent('external%3Alarge-native%3A1'))");
+  await expect(page.locator('#subDetail')).toContainText('shell · native-call');
+  await expect(page.locator('#subDetail button')).toHaveCount(1);
 });

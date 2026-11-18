@@ -95,17 +95,32 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 		if q.Get("turn_id") == "" {
 			return nil, badQuery("turn_id is required")
 		}
-		var rows []displayText
-		err = c.query(ctx, numberedTurns+`SELECT request_id,arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32) AS texts FROM grouped WHERE turn_key={turn:String} ORDER BY started_at,request_id LIMIT 1`, w.params, &rows)
+		var rows []struct {
+			RequestID string    `json:"request_id"`
+			StartedAt time.Time `json:"started_at"`
+		}
+		err = c.query(ctx, numberedTurns+`SELECT request_id,started_at FROM grouped WHERE turn_key={turn:String} ORDER BY started_at,request_id LIMIT 1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) == 0 {
 			return nil, archiveNotFound
 		}
-		text, _ := firstUserText(rows[0].Texts)
+		w.params.Set("id", rows[0].RequestID)
+		w.params.Set("from", rows[0].StartedAt.Format("2006-01-02 15:04:05.999999999"))
+		w.params.Set("to", rows[0].StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
+		data, err := c.rawBytes(ctx, w, "toJSONString("+userTextItems+")", ` FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND request_id={id:String}`)
+		if err != nil {
+			return nil, err
+		}
+		var texts []string
+		if err = json.Unmarshal(data, &texts); err != nil {
+			return nil, err
+		}
+		text, _ := firstUserText(texts)
 		return map[string]string{"status": "ok", "text": text}, nil
 	}
+
 	join := strings.Replace(factsWithUsage, "{db:Identifier}.request_facts AS f", "grouped AS f", 1)
 	filter := ""
 	if q.Get("turn_id") != "" {
@@ -187,12 +202,20 @@ type externalMessage struct {
 	Type            string    `json:"type"`
 	ToolName        string    `json:"tool_name"`
 	Text            string    `json:"text"`
+	Truncated       bool      `json:"truncated,omitempty"`
 }
 
-const externalColumns = `session_id,native_session_id,source,project,title,ts,position,role,type,tool_name,text`
+const externalMetadataColumns = `session_id,native_session_id,source,project,title,ts,position,role,type,tool_name`
+const externalPreviewColumns = externalMetadataColumns + `,substringUTF8(text,1,4000) AS text,CAST(lengthUTF8(text)>4000,'Bool') AS truncated`
+
+func (c *clickhouseReader) externalText(ctx context.Context, w readWindow, position uint32) (string, error) {
+	w.params.Set("position", strconv.FormatUint(uint64(position), 10))
+	text, err := c.rawBytes(ctx, w, "text", ` FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String} AND position={position:UInt32}`)
+	return string(text), err
+}
 
 const externalGroups = `WITH events AS (SELECT *,sum(role='user' OR position=first_position) OVER (ORDER BY position ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM (
- SELECT *,min(position) OVER () AS first_position FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}
+ SELECT ` + externalMetadataColumns + `,substringUTF8(text,1,12000) AS text,min(position) OVER () AS first_position FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}
 )), grouped AS (SELECT *,min(position) OVER (PARTITION BY turn_no) AS turn_position FROM events) `
 
 func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q url.Values, endpoint string, limit, offset int) (any, error) {
@@ -218,16 +241,20 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 			return nil, badQuery("turn_id is required")
 		}
 		var rows []struct {
-			Text string `json:"text"`
+			Position uint32 `json:"position"`
 		}
-		err = c.query(ctx, externalGroups+`SELECT text FROM grouped`+filter+` ORDER BY position LIMIT 1`, w.params, &rows)
+		err = c.query(ctx, externalGroups+`SELECT position FROM grouped`+filter+` ORDER BY position LIMIT 1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) == 0 {
 			return nil, archiveNotFound
 		}
-		return map[string]string{"status": "ok", "text": rows[0].Text}, nil
+		text, err := c.externalText(ctx, w, rows[0].Position)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "ok", "text": text}, nil
 	}
 	order := "ASC"
 	if q.Get("order") == "desc" {
@@ -236,6 +263,8 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 	page := ` ORDER BY turn_position ` + order + ` LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
 	if filter != "" {
 		page = ` LIMIT 1`
+		limit = min(limit, 160)
+		w.params.Set("limit", strconv.Itoa(limit))
 	}
 	turns := []clickhouseTurn{}
 	err = c.query(ctx, externalGroups+`SELECT toString(turn_position) AS turn_id,concat('external:',any(session_id)) AS session_id,substring(argMin(text,position),1,1600) AS user_text,substring(argMaxIf(text,position,role='assistant' AND text!=''),1,12000) AS final_text,count() AS requests,min(ts) AS first_at,max(ts) AS last_at,'imported' AS outcome,any(source) AS client,groupUniqArrayIf(tool_name,tool_name!='') AS tool_names FROM grouped`+filter+` GROUP BY turn_position`+page, w.params, &turns)
@@ -247,7 +276,7 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 			return nil, archiveNotFound
 		}
 		rows := []externalMessage{}
-		err = c.query(ctx, externalGroups+`SELECT `+externalColumns+` FROM grouped`+filter+` ORDER BY position LIMIT {limit:UInt32} OFFSET {offset:UInt32}`, w.params, &rows)
+		err = c.query(ctx, externalGroups+`SELECT `+externalPreviewColumns+` FROM grouped`+filter+` ORDER BY position LIMIT {limit:UInt32} OFFSET {offset:UInt32} SETTINGS prefer_column_name_to_alias=1,max_threads=1,max_block_size=1`, w.params, &rows)
 		records := []RequestTimelineView{}
 		for _, m := range rows {
 			records = append(records, externalView(m))
@@ -266,7 +295,7 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 }
 func externalView(m externalMessage) RequestTimelineView {
 	id := "external:" + m.SessionID + ":" + strconv.FormatUint(uint64(m.Position), 10)
-	return RequestTimelineView{RequestID: id, SessionID: "external:" + m.SessionID, Summary: m.Title, Outcome: "imported", StartedAt: m.TS, CompletedAt: m.TS, Kind: "turn", Facets: map[string][]string{"source.kind": {"external-local-history"}, "source.tool": {m.Source}}, Entries: []TimelineEntry{{Role: m.Role, Text: m.Text, Label: m.ToolName, Timestamp: &m.TS}}, Metadata: map[string]any{"external_session": map[string]any{"id": m.NativeSessionID, "title": m.Title, "project_path": m.Project}}}
+	return RequestTimelineView{RequestID: id, SessionID: "external:" + m.SessionID, Summary: m.Title, Outcome: "imported", StartedAt: m.TS, CompletedAt: m.TS, Kind: "turn", Facets: map[string][]string{"source.kind": {"external-local-history"}, "source.tool": {m.Source}}, Entries: []TimelineEntry{{Role: m.Role, Text: m.Text, Label: m.ToolName, Timestamp: &m.TS, Direction: "input", Truncated: m.Truncated}}, Metadata: map[string]any{"external_session": map[string]any{"id": m.NativeSessionID, "title": m.Title, "project_path": m.Project}}}
 }
 func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Values, endpoint string, limit int) (any, error) {
 	id := q.Get("id")
@@ -292,8 +321,12 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		}
 		w.params.Set("session", id[len("external:"):at])
 		w.params.Set("position", strconv.FormatUint(pos, 10))
+		columns := externalMetadataColumns
+		if endpoint == "request-view" {
+			columns = externalPreviewColumns
+		}
 		var rows []externalMessage
-		err = c.query(ctx, `SELECT `+externalColumns+` FROM {db:Identifier}.external_messages FINAL WHERE session_id={session:String} AND position={position:UInt32} AND ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} LIMIT 1`, w.params, &rows)
+		err = c.query(ctx, `SELECT `+columns+` FROM {db:Identifier}.external_messages FINAL WHERE session_id={session:String} AND position={position:UInt32} AND ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} LIMIT 1 SETTINGS prefer_column_name_to_alias=1,max_threads=1,max_block_size=1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
@@ -304,6 +337,10 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		v := externalView(m)
 		if endpoint == "request-view" {
 			return v, nil
+		}
+		m.Text, err = c.externalText(ctx, w, m.Position)
+		if err != nil {
+			return nil, err
 		}
 		body, _ := json.Marshal(m)
 		rec := Record{RequestID: id, SessionID: v.SessionID, SourceFormat: "external-native-event", Outcome: "imported", StartedAt: m.TS, CompletedAt: m.TS, OriginalRequest: body, Facets: v.Facets, Metadata: v.Metadata}

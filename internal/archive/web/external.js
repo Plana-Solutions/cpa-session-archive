@@ -31,7 +31,7 @@ var ExternalArchive = {
     return !value || String(value).startsWith("0001-") ?
       this.label("Time not recorded", "未记录时间") : localTime(value);
   },
-  renderEntry: function (entry) {
+  renderEntry: function (entry, requestID) {
     var identity = [entry.event_id, entry.parent_id ? "← " + entry.parent_id : "",
       entry.timestamp && this.recordedTime(entry.timestamp)].filter(Boolean).join(" · ");
     var label = [entry.label, entry.call_id].filter(Boolean).join(" · ");
@@ -39,7 +39,7 @@ var ExternalArchive = {
       esc(identity) + "</div>" +
       (entry.text ? renderMessage(entry.role || "event", entry.text, label) :
         '<div class="message-role">' + esc([entry.role || "event", label].filter(Boolean).join(" · ")) + "</div>") +
-      "</section>";
+      renderTruncation(entry, requestID) + "</section>";
   },
   nativeDiagnostics: function () {
     return '<details class="technical-meta"><summary>' +

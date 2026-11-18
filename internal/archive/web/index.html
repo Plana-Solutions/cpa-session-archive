@@ -2766,7 +2766,7 @@
           );
         var external = ExternalArchive.isExternal(view);
         var entries = (view.entries || []).map(function (entry) {
-          return external ? ExternalArchive.renderEntry(entry) : renderTimelineEntry(entry);
+          return external ? ExternalArchive.renderEntry(entry, view.request_id) : renderTimelineEntry(entry, view.request_id);
         }).join("");
         if (!entries && view.kind === "retry")
           entries =
@@ -2798,7 +2798,7 @@
           "</article>"
         );
       }
-      function renderTimelineEntry(entry) {
+      function renderTimelineEntry(entry, requestID) {
         var role =
           entry.role === "tool_call" || entry.role === "tool_result"
             ? "tool"
@@ -2818,13 +2818,15 @@
             "'))\">" +
             esc(t("viewTool")) +
             "</button>";
-        if (entry.truncated)
-          html +=
-            '<div class="context-summary">' +
-            esc(t("contentTruncated")) +
-            "</div><button onclick=\"openRaw('" + (entry.direction === "input" ? "request" : "response") + "')\">" + esc(t("expandFull")) + "</button>";
-        return html;
+        return html + renderTruncation(entry, requestID);
       }
+      function renderTruncation(entry, requestID) {
+        if (!entry.truncated) return "";
+        return '<div class="context-summary">' +
+            esc(t("contentTruncated")) +
+            "</div><button onclick=\"openRaw('" + (entry.direction === "input" ? "request" : "response") + "'" + (requestID ? ",decodeURIComponent('" + jsId(requestID) + "')" : "") + ")\">" + esc(t("expandFull")) + "</button>";
+      }
+
       function renderRawLinks() {
         var parts = [
           { id: "request", label: t("originalRequest") },
@@ -3216,7 +3218,8 @@
           return entry.arguments || entry.output;
         });
       }
-      function openRaw(part) {
+      function openRaw(part, requestID) {
+        if (requestID) currentRequestID = requestID;
         var base = "#/sessions/" + encodeURIComponent(detailSessionID);
         if (currentTurnID)
           base += "/turns/" + encodeURIComponent(currentTurnID);
