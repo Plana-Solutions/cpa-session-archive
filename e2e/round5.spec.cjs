@@ -45,13 +45,16 @@ test('truncated previews offer full diagnostics', async ({ page }) => {
   await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "event.stopPropagation();openRaw('request')");
 });
 
-test('truncated native events offer full stored diagnostics', async ({ page }) => {
+test('truncated native process events offer full stored diagnostics', async ({ page }) => {
   await open(page);
   await page.evaluate(() => {
     showSubDetail();
-    document.querySelector('#subDetail').innerHTML = ExternalArchive.renderEntry({
-      role: 'tool_call', label: 'shell', call_id: 'native-call', direction: 'input', text: 'short native preview', truncated: true,
-    }, 'external:large-native:1');
+    currentRequestID = 'stale-previous-request';
+    document.querySelector('#subDetail').innerHTML = renderTurnProcessBody({
+      request_id: 'external:large-native:1', source_format: 'external-native-event', entries: [{
+        role: 'tool_call', label: 'shell', call_id: 'native-call', direction: 'input', text: 'short native preview', truncated: true,
+      }],
+    }, true);
   });
   await expect(page.locator('#subDetail button')).toBeVisible();
   await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "event.stopPropagation();openRaw('request',decodeURIComponent('external%3Alarge-native%3A1'))");
