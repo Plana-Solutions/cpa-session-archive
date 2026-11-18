@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -32,9 +33,12 @@ type managementResponse struct {
 
 func (p *Plugin) managementRegistration() map[string]any {
 	base := "/plugins/" + pluginID
-	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/insights"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
+	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/insights"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/cancel-search"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
 }
 func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
+	return p.handleManagementContext(context.Background(), raw)
+}
+func (p *Plugin) handleManagementContext(ctx context.Context, raw []byte) ([]byte, error) {
 	var r managementRequest
 	if e := json.Unmarshal(raw, &r); e != nil {
 		return nil, e
@@ -74,7 +78,7 @@ func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	if reader == nil || reader.config.URL == "" {
 		return managementJSON(503, map[string]string{"error": "Configure clickhouse-url to read the archive"})
 	}
-	value, err := reader.read(strings.TrimPrefix(path, base), r.Query)
+	value, err := reader.readContext(ctx, strings.TrimPrefix(path, base), r.Query)
 	if err != nil {
 		status := 502
 		var apiErr *archiveReadError

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,41 @@ const turnColumns = `f.request_id AS turn_id,conversation_id AS session_id,subst
  started_at AS first_at,addMilliseconds(started_at,duration_ms) AS last_at,key_id,model,outcome,status_code,tools_called AS tool_names,
  duration_ms,input_tokens,output_tokens,reasoning_tokens,total_tokens,client,kind,input_items,length(tools_offered) AS tool_definitions`
 
+const conversationTraffic = `kind NOT IN ('count_tokens','models','embeddings')`
+const tailHasTool = `arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)`
+const tailHasUser = `arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)`
+const turnStart = `(NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `))`
+const turnUserText = `arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type)`
+
+// Keep turn identity shared by lists, detail and exports. A tool-result tail continues a Claude turn even when it includes user text.
+const numberedTurns = `WITH steps AS (
+ SELECT *,lagInFrame(turn_id) OVER w AS prev_codex,row_number() OVER w AS rn
+ FROM {db:Identifier}.request_facts WHERE ` + timeFilter + ` AND conversation_id={session:String} AND ` + conversationTraffic + `
+ WINDOW w AS (ORDER BY started_at,request_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+), numbered AS (
+ SELECT *,sum(rn=1 OR if(turn_id!='',turn_id!=prev_codex,` + turnStart + `)) OVER (ORDER BY started_at,request_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM steps
+), grouped AS (
+ SELECT *,if(turn_id!='',turn_id,first_value(request_id) OVER (PARTITION BY turn_no ORDER BY started_at,request_id)) AS turn_key FROM numbered
+) `
+const groupedTurnColumns = `turn_key AS turn_id,any(conversation_id) AS session_id,
+ substringUTF8(argMin(` + turnUserText + `,(started_at,request_id)),1,1600) AS user_text,
+ substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!=''),1,12000) AS final_text,
+ count() AS requests,min(started_at) AS first_at,max(addMilliseconds(started_at,f.duration_ms)) AS last_at,
+ argMax(key_id,(started_at,request_id)) AS key_id,argMax(f.model,(started_at,request_id)) AS model,
+ argMax(f.outcome,(started_at,request_id)) AS outcome,argMax(f.status_code,(started_at,request_id)) AS status_code,
+ arraySort(groupUniqArrayArray(tools_called)) AS tool_names,
+ sum(f.duration_ms) AS duration_ms,sum(u.input_tokens) AS input_tokens,sum(u.output_tokens) AS output_tokens,
+ sum(u.reasoning_tokens) AS reasoning_tokens,sum(u.total_tokens) AS total_tokens`
+
+func (c *clickhouseReader) narrow(ctx context.Context, w readWindow, where string) (readWindow, error) {
+	var rows []struct{ Lo, Hi string }
+	err := c.query(ctx, `SELECT toString(min(started_at)) AS Lo,toString(addNanoseconds(max(started_at),1)) AS Hi FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+where+` HAVING count()>0 LIMIT 1`, w.params, &rows)
+	if err == nil && len(rows) > 0 {
+		w.params.Set("from", rows[0].Lo)
+		w.params.Set("to", rows[0].Hi)
+	}
+	return w, err
+}
 func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values, endpoint string, limit, offset int) (any, error) {
 	id := q.Get("session_id")
 	if id == "" {
@@ -38,7 +74,11 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 	if strings.HasPrefix(id, "external:") {
 		return c.externalTurns(ctx, w, q, endpoint, limit, offset)
 	}
-	where := timeFilter + ` AND conversation_id={session:String}`
+	var err error
+	w, err = c.narrow(ctx, w, `conversation_id={session:String} AND `+conversationTraffic)
+	if err != nil {
+		return nil, err
+	}
 	if endpoint == "turn-text" {
 		if q.Get("turn_id") == "" {
 			return nil, badQuery("turn_id is required")
@@ -46,7 +86,7 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 		var rows []struct {
 			Text string `json:"text"`
 		}
-		err := c.query(ctx, `SELECT last_user_text AS text FROM {db:Identifier}.request_facts WHERE `+where+` AND request_id={turn:String} LIMIT 1`, w.params, &rows)
+		err = c.query(ctx, numberedTurns+`SELECT `+turnUserText+` AS text FROM grouped WHERE turn_key={turn:String} ORDER BY started_at,request_id LIMIT 1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
@@ -55,42 +95,45 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 		}
 		return map[string]string{"status": "ok", "text": rows[0].Text}, nil
 	}
+	join := strings.Replace(factsWithUsage, "{db:Identifier}.request_facts AS f", "grouped AS f", 1)
+	filter := ""
 	if q.Get("turn_id") != "" {
-		rows := []clickhouseTurn{}
-		err := c.query(ctx, `SELECT `+strings.ReplaceAll(strings.ReplaceAll(turnColumns, "substringUTF8(reply_text,1,12000)", "reply_text"), "substringUTF8(reasoning_text,1,12000)", "reasoning_text")+` `+factsWithUsage+` WHERE `+where+` AND f.request_id={turn:String} LIMIT 1`, w.params, &rows)
-		if err != nil {
-			return nil, err
-		}
-		if len(rows) == 0 {
-			return nil, archiveNotFound
-		}
-		records := []RequestTimelineView{}
-		if offset == 0 {
-			records = append(records, turnPreview(rows[0]))
-		}
-		return map[string]any{"turn": rows[0], "records": records, "total": 1, "limit": limit, "offset": offset}, nil
+		filter = ` WHERE turn_key={turn:String}`
 	}
-	total, err := c.count(ctx, w, `{db:Identifier}.request_facts`, where)
-	if err != nil {
-		return nil, err
-	}
+	rows := []clickhouseTurn{}
 	order := "ASC"
 	if q.Get("order") == "desc" {
 		order = "DESC"
 	}
-	rows := []clickhouseTurn{}
-	err = c.query(ctx, `SELECT `+turnColumns+` `+factsWithUsage+` WHERE `+where+` ORDER BY started_at `+order+`,f.request_id `+order+` LIMIT {limit:UInt32} OFFSET {offset:UInt32}`, w.params, &rows)
-	return map[string]any{"turns": rows, "total": total, "limit": limit, "offset": offset}, err
-}
-func (c *clickhouseReader) count(ctx context.Context, w readWindow, table, where string) (int64, error) {
-	var rows []struct {
+	page := ` ORDER BY first_at ` + order + `,turn_id ` + order + ` LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
+	if filter != "" {
+		page = ` LIMIT 1`
+	}
+	err = c.query(ctx, numberedTurns+`SELECT `+groupedTurnColumns+` `+join+filter+` GROUP BY turn_key`+page, w.params, &rows)
+	if err != nil {
+		return nil, err
+	}
+	if filter != "" {
+		if len(rows) == 0 {
+			return nil, archiveNotFound
+		}
+		steps := []clickhouseTurn{}
+		err = c.query(ctx, numberedTurns+`SELECT `+turnColumns+` `+join+filter+` ORDER BY started_at,f.request_id LIMIT {limit:UInt32} OFFSET {offset:UInt32}`, w.params, &steps)
+		records := []RequestTimelineView{}
+		for _, step := range steps {
+			records = append(records, turnPreview(step))
+		}
+		return map[string]any{"turn": rows[0], "records": records, "total": rows[0].Requests, "limit": limit, "offset": offset}, err
+	}
+	var totals []struct {
 		N int64 `json:"n"`
 	}
-	err := c.query(ctx, `SELECT count() AS n FROM `+table+` WHERE `+where+` LIMIT 1`, w.params, &rows)
-	if len(rows) == 0 {
-		return 0, err
+	err = c.query(ctx, numberedTurns+`SELECT uniqExact(turn_key) AS n FROM grouped LIMIT 1`, w.params, &totals)
+	total := int64(0)
+	if len(totals) > 0 {
+		total = totals[0].N
 	}
-	return rows[0].N, err
+	return map[string]any{"turns": rows, "total": total, "limit": limit, "offset": offset}, err
 }
 func turnPreview(t clickhouseTurn) RequestTimelineView {
 	view := RequestTimelineView{RequestID: t.TurnID, SessionID: t.SessionID, KeyID: t.KeyID, Summary: t.UserText, Model: t.Model, Outcome: t.Outcome, StatusCode: t.StatusCode, StartedAt: t.FirstAt, CompletedAt: t.LastAt, Kind: "turn", Entries: []TimelineEntry{}}
@@ -124,6 +167,10 @@ type externalMessage struct {
 
 const externalColumns = `session_id,native_session_id,source,project,title,ts,position,role,type,tool_name,text`
 
+const externalGroups = `WITH events AS (SELECT *,sum(role='user' OR position=first_position) OVER (ORDER BY position ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM (
+ SELECT *,min(position) OVER () AS first_position FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}
+)), grouped AS (SELECT *,min(position) OVER (PARTITION BY turn_no) AS turn_position FROM events) `
+
 func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q url.Values, endpoint string, limit, offset int) (any, error) {
 	present, err := c.externalExists(ctx)
 	if err != nil {
@@ -133,68 +180,65 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 		return nil, archiveNotFound
 	}
 	w.params.Set("session", strings.TrimPrefix(q.Get("session_id"), "external:"))
-	where := `ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`
+	filter := ""
 	if q.Get("turn_id") != "" {
-		pos, err := strconv.ParseUint(q.Get("turn_id"), 10, 32)
-		if err != nil {
-			return nil, badQuery("invalid imported event position")
+		pos, e := strconv.ParseUint(q.Get("turn_id"), 10, 32)
+		if e != nil {
+			return nil, badQuery("invalid imported turn position")
 		}
 		w.params.Set("position", strconv.FormatUint(pos, 10))
-		where += ` AND position={position:UInt32}`
+		filter = ` WHERE turn_position={position:UInt32}`
 	}
-	rows := []externalMessage{}
+	if endpoint == "turn-text" {
+		if filter == "" {
+			return nil, badQuery("turn_id is required")
+		}
+		var rows []struct {
+			Text string `json:"text"`
+		}
+		err = c.query(ctx, externalGroups+`SELECT text FROM grouped`+filter+` ORDER BY position LIMIT 1`, w.params, &rows)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			return nil, archiveNotFound
+		}
+		return map[string]string{"status": "ok", "text": rows[0].Text}, nil
+	}
 	order := "ASC"
 	if q.Get("order") == "desc" {
 		order = "DESC"
 	}
-	pageClause := ` LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
-	if q.Get("turn_id") != "" {
-		pageClause = ` LIMIT 1`
-	}
-	err = c.query(ctx, `SELECT `+externalColumns+` FROM {db:Identifier}.external_messages FINAL WHERE `+where+` ORDER BY position `+order+pageClause, w.params, &rows)
-	if err != nil {
-		return nil, err
-	}
-	if q.Get("turn_id") != "" {
-		if len(rows) == 0 {
-			return nil, archiveNotFound
-		}
-		m := rows[0]
-		if endpoint == "turn-text" {
-			return map[string]string{"status": "ok", "text": m.Text}, nil
-		}
-		turn := externalTurn(m)
-		records := []RequestTimelineView{}
-		if offset == 0 {
-			records = append(records, externalView(m))
-		}
-		return map[string]any{"turn": turn, "records": records, "total": 1, "limit": limit, "offset": offset}, nil
-	}
-	if endpoint == "turn-text" {
-		return nil, badQuery("turn_id is required")
-	}
-	total, err := c.count(ctx, w, `{db:Identifier}.external_messages FINAL`, where)
-	if err != nil {
-		return nil, err
+	page := ` ORDER BY turn_position ` + order + ` LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
+	if filter != "" {
+		page = ` LIMIT 1`
 	}
 	turns := []clickhouseTurn{}
-	for _, m := range rows {
-		turns = append(turns, externalTurn(m))
+	err = c.query(ctx, externalGroups+`SELECT toString(turn_position) AS turn_id,concat('external:',any(session_id)) AS session_id,substring(argMin(text,position),1,1600) AS user_text,substring(argMaxIf(text,position,role='assistant' AND text!=''),1,12000) AS final_text,count() AS requests,min(ts) AS first_at,max(ts) AS last_at,'imported' AS outcome,any(source) AS client,groupUniqArrayIf(tool_name,tool_name!='') AS tool_names FROM grouped`+filter+` GROUP BY turn_position`+page, w.params, &turns)
+	if err != nil {
+		return nil, err
 	}
-	return map[string]any{"turns": turns, "total": total, "limit": limit, "offset": offset}, nil
-}
-func externalTurn(m externalMessage) clickhouseTurn {
-	t := clickhouseTurn{TurnSummary: TurnSummary{TurnID: strconv.FormatUint(uint64(m.Position), 10), SessionID: "external:" + m.SessionID, Requests: 1, FirstAt: m.TS, LastAt: m.TS, Outcome: "imported"}, Client: m.Source}
-	if m.Role == "user" {
-		t.UserText = m.Text
-	} else {
-		t.UserText = m.Title
-		t.FinalText = m.Text
+	if filter != "" {
+		if len(turns) == 0 {
+			return nil, archiveNotFound
+		}
+		rows := []externalMessage{}
+		err = c.query(ctx, externalGroups+`SELECT `+externalColumns+` FROM grouped`+filter+` ORDER BY position LIMIT {limit:UInt32} OFFSET {offset:UInt32}`, w.params, &rows)
+		records := []RequestTimelineView{}
+		for _, m := range rows {
+			records = append(records, externalView(m))
+		}
+		return map[string]any{"turn": turns[0], "records": records, "total": turns[0].Requests, "limit": limit, "offset": offset}, err
 	}
-	if m.ToolName != "" {
-		t.ToolNames = []string{m.ToolName}
+	var counts []struct {
+		N int64 `json:"n"`
 	}
-	return t
+	err = c.query(ctx, externalGroups+`SELECT uniqExact(turn_position) AS n FROM grouped LIMIT 1`, w.params, &counts)
+	total := int64(0)
+	if len(counts) > 0 {
+		total = counts[0].N
+	}
+	return map[string]any{"turns": turns, "total": total, "limit": limit, "offset": offset}, err
 }
 func externalView(m externalMessage) RequestTimelineView {
 	id := "external:" + m.SessionID + ":" + strconv.FormatUint(uint64(m.Position), 10)
@@ -245,7 +289,11 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		return rec, nil
 	}
 	var facts []clickhouseTurn
-	err := c.query(ctx, `SELECT `+turnColumns+` `+factsWithUsage+` WHERE `+timeFilter+` AND f.request_id={id:String} LIMIT 1`, w.params, &facts)
+	w, err := c.narrow(ctx, w, `request_id={id:String}`)
+	if err != nil {
+		return nil, err
+	}
+	err = c.query(ctx, `SELECT `+turnColumns+` `+factsWithUsage+` WHERE `+timeFilter+` AND f.request_id={id:String} LIMIT 1`, w.params, &facts)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +304,9 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 	if endpoint == "request-view" {
 		view := turnPreview(t)
 		var messages []struct {
+			Chars     int    `json:"chars"`
+			Direction string `json:"direction"`
+			Position  uint32 `json:"position"`
 			Role      string `json:"role"`
 			Type      string `json:"type"`
 			Tool      string `json:"tool_name"`
@@ -263,14 +314,20 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 			Text      string `json:"text"`
 			Arguments string `json:"arguments"`
 		}
-		err = c.query(ctx, `SELECT role,type,tool_name,call_id,substringUTF8(text,1,40000) AS text,substringUTF8(arguments,1,40000) AS arguments FROM {db:Identifier}.messages WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position LIMIT 100`, w.params, &messages)
+		err = c.query(ctx, `SELECT lengthUTF8(m.text) AS chars,direction,position,role,type,tool_name,call_id,substring(text,1,8000) AS text,substring(arguments,1,8000) AS arguments FROM {db:Identifier}.messages AS m WHERE `+timeFilter+` AND request_id={id:String} ORDER BY direction,position DESC LIMIT 80 BY direction LIMIT 160`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}
+		sort.Slice(messages, func(i, j int) bool {
+			if messages[i].Direction != messages[j].Direction {
+				return messages[i].Direction < messages[j].Direction
+			}
+			return messages[i].Position < messages[j].Position
+		})
 		view.Entries = []TimelineEntry{}
 		for _, m := range messages {
 			if m.Role == "system" || m.Role == "developer" {
-				view.SystemChars += len([]rune(m.Text))
+				view.SystemChars += m.Chars
 			}
 			role := m.Role
 			text := m.Text
@@ -291,13 +348,17 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 	}
 	if endpoint == "request-context" {
 		w.params.Set("session", t.SessionID)
+		if q.Get("call_id") == "" {
+			return nil, badQuery("call_id is required")
+		}
+		w.params.Set("call", q.Get("call_id"))
 		w.params.Set("start", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
 		w.params.Set("limit", strconv.Itoa(min(limit, 32)))
 		var messages []struct {
 			CallID string `json:"call_id"`
 			Text   string `json:"text"`
 		}
-		err = c.query(ctx, `SELECT call_id,substringUTF8(text,1,200000) AS text FROM {db:Identifier}.messages WHERE `+timeFilter+` AND conversation_id={session:String} AND started_at >= {start:DateTime64(9,'UTC')} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
+		err = c.query(ctx, `SELECT call_id,substring(text,1,64000) AS text FROM {db:Identifier}.messages WHERE conversation_id={session:String} AND started_at > {start:DateTime64(9,'UTC')} AND started_at < {start:DateTime64(9,'UTC')} + INTERVAL 1 DAY AND call_id={call:String} AND role='tool' ORDER BY started_at,position LIMIT {limit:UInt32}`, w.params, &messages)
 		if err != nil {
 			return nil, err
 		}

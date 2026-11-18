@@ -2,78 +2,111 @@ package archive
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
+// Export chunks are UTF-8 slices of complete JSONL records. The client concatenates them without parsing partial records.
 func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Values) (any, error) {
 	format := q.Get("format")
-	if format != "" && format != "archive" && format != "sft" {
-		return nil, badQuery("unsupported export format")
-	}
 	if format == "" {
 		format = "archive"
+	}
+	if format != "archive" && format != "sft" {
+		return nil, badQuery("unsupported export format")
 	}
 	if q.Get("scope") != "all" && q.Get("id") == "" {
 		return nil, badQuery("session id is required")
 	}
-	ids := []struct {
-		ID string `json:"id"`
-	}{}
-	where := timeFilter
+	offset, err := boundedInt(q, "offset", 0, 1000000)
+	if err != nil {
+		return nil, err
+	}
+	part, err := boundedInt(q, "byte_offset", 0, 1<<30)
+	if err != nil {
+		return nil, err
+	}
+	w.params.Set("offset", strconv.Itoa(offset))
+	w.params.Set("part", strconv.Itoa(part+1))
+	where := timeFilter + ` AND conversation_id!='' AND ` + conversationTraffic
 	if q.Get("id") != "" {
 		w.params.Set("session", q.Get("id"))
 		where += ` AND conversation_id={session:String}`
 	}
-	sql := `SELECT request_id AS id FROM {db:Identifier}.request_facts WHERE ` + where
+	sessionsSQL := `SELECT conversation_id AS id FROM {db:Identifier}.request_facts WHERE ` + where + ` GROUP BY conversation_id`
 	present, err := c.externalExists(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if present {
-		externalWhere := `ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')}`
+		extWhere := `ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')}`
 		if q.Get("id") != "" {
 			w.params.Set("external_session", strings.TrimPrefix(q.Get("id"), "external:"))
-			externalWhere += ` AND session_id={external_session:String}`
+			extWhere += ` AND session_id={external_session:String}`
 		}
-		sql += ` UNION ALL SELECT concat('external:',session_id,':',toString(position)) AS id FROM {db:Identifier}.external_messages FINAL WHERE ` + externalWhere
+		sessionsSQL += ` UNION ALL SELECT concat('external:',session_id) AS id FROM {db:Identifier}.external_messages FINAL WHERE ` + extWhere + ` GROUP BY session_id`
 	}
-	err = c.query(ctx, `SELECT id FROM (`+sql+`) ORDER BY id LIMIT 201`, w.params, &ids)
+	sessionIndex, err := boundedInt(q, "session_offset", 0, 1000000)
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) > 200 {
-		return nil, badQuery("Export exceeds 200 records. Narrow the date range or export one session. Use offline tools for larger archives.")
+	w.params.Set("session_offset", strconv.Itoa(sessionIndex))
+	var sessions []struct {
+		ID string `json:"id"`
 	}
-	var content strings.Builder
-	for _, row := range ids {
-		value, err := c.request(ctx, w, url.Values{"id": {row.ID}}, "requests", 1)
-		if err != nil {
-			return nil, err
-		}
-		rec := value.(Record)
-		var item any = rec
+	err = c.query(ctx, `SELECT id FROM (`+sessionsSQL+`) ORDER BY id LIMIT 1 OFFSET {session_offset:UInt32}`, w.params, &sessions)
+	if err != nil {
+		return nil, err
+	}
+	name := "session." + format + ".jsonl"
+	if q.Get("scope") == "all" {
+		name = "cpa-session-archive.all." + format + ".jsonl"
+	}
+	ticket := map[string]any{"filename": name, "content_type": "application/x-ndjson", "content": "", "done": len(sessions) == 0, "next_offset": offset, "next_byte_offset": 0, "next_session_offset": sessionIndex}
+	if len(sessions) == 0 {
+		return ticket, nil
+	}
+	id := sessions[0].ID
+	w.params.Set("session", strings.TrimPrefix(id, "external:"))
+	var recordsSQL string
+	if strings.HasPrefix(id, "external:") {
+		base := `FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`
 		if format == "sft" {
-			example, valid := trainingExample(rec)
-			if !valid {
-				continue
-			}
-			item = example
+			recordsSQL = `SELECT toJSONString(map('messages',arrayMap(x->map('role',x.2,'content',x.3),arraySort(x->x.1,groupArray((position,role,text)))))) AS line ` + base + ` HAVING count()>0 LIMIT 1 OFFSET {offset:UInt32}`
+		} else {
+			recordsSQL = `SELECT toJSONString(CAST((concat('external:',session_id,':',toString(position)),concat('external:',session_id),'external-native-event',base64Encode(toJSONString(map('role',role,'text',text))),''),'Tuple(request_id String,session_id String,source_format String,original_request String,response String)')) AS line ` + base + ` ORDER BY position LIMIT 1 OFFSET {offset:UInt32}`
 		}
-		line, err := json.Marshal(item)
-		if err != nil {
-			return nil, err
-		}
-		if content.Len()+len(line) > resultLimit/2 {
-			return nil, badQuery("Export is too large. Narrow the range or use offline tools.")
-		}
-		content.Write(line)
-		content.WriteByte('\n')
+	} else if format == "sft" {
+		recordsSQL = `SELECT concat('{"messages":[',arrayStringConcat(arrayMap(x->x.3,arraySort(x->(x.1,x.2),groupArray((started_at,sort_key,message)))),','),']}') AS line FROM (
+ SELECT started_at,concat(request_id,if(direction='input','0','1'),leftPad(toString(position),10,'0')) AS sort_key,
+ multiIf(role='tool',toJSONString(CAST(('tool',call_id,text),'Tuple(role String,tool_call_id String,content String)')),
+ role='assistant' AND tool_name!='',toJSONString(CAST(('assistant',[(call_id,'function',(tool_name,arguments))]),'Tuple(role String,tool_calls Array(Tuple(id String,type String,function Tuple(name String,arguments String))))')),
+ toJSONString(map('role',role,'content',text))) AS message
+ FROM {db:Identifier}.messages WHERE ` + timeFilter + ` AND conversation_id={session:String} AND ` + conversationTraffic + `) HAVING count()>0 LIMIT 1 OFFSET {offset:UInt32}`
+
+	} else {
+		recordsSQL = numberedTurns + `SELECT toJSONString(CAST((r.request_id,{session:String},r.trace_id,r.model,r.requested_model,r.source_format,r.outcome,r.status_code,r.started_at,r.completed_at,base64Encode(r.request_body),base64Encode(if(r.response_body!='',r.response_body,arrayStringConcat(r.response_chunks,'')))),'Tuple(request_id String,session_id String,trace_id String,model String,requested_model String,source_format String,outcome String,status_code UInt16,started_at DateTime64(9,\'UTC\'),completed_at DateTime64(9,\'UTC\'),original_request String,response String)')) AS line FROM {db:Identifier}.requests AS r WHERE ` + timeFilter + ` AND request_id IN (SELECT argMax(request_id,(started_at,request_id)) FROM grouped GROUP BY turn_key) ORDER BY started_at,request_id LIMIT 1 OFFSET {offset:UInt32}`
 	}
-	name := "cpa-session-archive.all"
-	if q.Get("id") != "" {
-		name = "session"
+	var rows []struct {
+		Content string `json:"content"`
+		Length  int    `json:"length"`
 	}
-	return map[string]string{"content": content.String(), "filename": name + "." + format + ".jsonl", "content_type": "application/x-ndjson"}, nil
+	err = c.query(ctx, `SELECT substringUTF8(line,{part:UInt32},262144) AS content,lengthUTF8(line) AS length FROM (`+recordsSQL+`) LIMIT 1`, w.params, &rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		ticket["next_session_offset"] = sessionIndex + 1
+		ticket["next_offset"] = 0
+		return ticket, nil
+	}
+	ticket["content"] = rows[0].Content
+	if part+262144 >= rows[0].Length {
+		ticket["content"] = rows[0].Content + "\n"
+		ticket["next_offset"] = offset + 1
+	} else {
+		ticket["next_byte_offset"] = part + 262144
+	}
+	return ticket, nil
 }

@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -35,13 +36,17 @@ type envelope struct {
 func NewPlugin() *Plugin       { return &Plugin{} }
 func ok(v any) ([]byte, error) { return json.Marshal(envelope{OK: true, Result: v}) }
 func (p *Plugin) Handle(method string, raw []byte) ([]byte, error) {
+	return p.HandleContext(context.Background(), method, raw)
+}
+
+func (p *Plugin) HandleContext(ctx context.Context, method string, raw []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		return p.configure(raw)
 	case "management.register":
 		return ok(p.managementRegistration())
 	case "management.handle":
-		return p.handleManagement(raw)
+		return p.handleManagementContext(ctx, raw)
 	default:
 		return nil, errors.New("unknown method")
 	}

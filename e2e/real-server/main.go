@@ -17,7 +17,7 @@ func main() {
 	clickhouse := flag.String("clickhouse", os.Getenv("CLICKHOUSE_URL"), "ClickHouse reader HTTP URL")
 	flag.Parse()
 	p := archive.NewPlugin()
-	settings, _ := yaml.Marshal(map[string]string{"clickhouse-url": *clickhouse, "clickhouse-user": "inference_reader", "clickhouse-password": os.Getenv("CLICKHOUSE_READER_PASSWORD")})
+	settings, _ := yaml.Marshal(map[string]string{"clickhouse-url": *clickhouse, "clickhouse-user": "inference_reader", "clickhouse-password": os.Getenv("CLICKHOUSE_PASSWORD")})
 	config, _ := json.Marshal(map[string][]byte{"config_yaml": settings})
 	if _, err := p.Handle("plugin.register", config); err != nil {
 		log.Fatal(err)
@@ -39,7 +39,7 @@ func main() {
 		request, _ := json.Marshal(map[string]any{
 			"Method": r.Method, "Path": path, "Headers": r.Header, "Query": r.URL.Query(),
 		})
-		result, err := p.Handle("management.handle", request)
+		result, err := p.HandleContext(r.Context(), "management.handle", request)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -1401,14 +1401,14 @@
           insightsError: "Could not load insights.", retryInsights: "Retry",
           insightRequests: "requests", insightRequestsNote: "model calls in this window",
           insightSessions: "sessions", insightSessionsNote: "distinct session identifiers",
-          insightTurns: "turns", insightTurnsNote: "distinct non-empty turn identifiers",
+          insightTurns: "turns", insightTurnsNote: "grouped user turns",
           insightModels: "models", insightModelsNote: "across all recorded requests",
           dailyRequests: "Daily requests", modelBehavior: "How each model behaves",
           metricRequests: "Requests", metricSessions: "Sessions", metricSteps: "Steps per turn",
           metricLatency: "Avg latency (s)", metricFailure: "Failure rate (%)", metricCancel: "Cancel rate (%)",
           providerAnthropic: "Anthropic", providerOpenai: "OpenAI", providerGoogle: "Google", providerOther: "Other",
           insightsEmpty: "No requests in this window.", modelsEmpty: "No models with at least 20 requests in this window.",
-          insightsFootnote: "Requests count model calls. Sessions count distinct session identifiers. Steps per turn is requests divided by distinct non-empty turn identifiers, and only covers models whose clients send turn identifiers. Average latency measures start to completion for successful requests only. Failure rate includes failed and rejected requests. Cancel rate counts canceled requests. Both rates divide by all requests. Days use UTC and include today. Charts show models with at least 20 requests; totals include every model. Imported histories are excluded.",
+          insightsFootnote: "Requests count model calls. Sessions count distinct session identifiers. Steps per turn is requests divided by grouped user turns, and only covers models whose clients send turn identifiers. Average latency measures start to completion for successful requests only. Failure rate includes failed and rejected requests. Cancel rate counts canceled requests. Both rates divide by all requests. Days use UTC and include today. Charts show models with at least 20 requests; totals include every model. Imported histories are excluded.",
           title: "Session Archive",
           subtitle:
             "Combine project, repository, client, session, model, tool, authentication and outcome metadata to find archived coding sessions.",
@@ -1733,7 +1733,7 @@
         turn: "SELECT request_id, last_user_text, reply_text, reasoning_text, tools_called FROM request_facts WHERE conversation_id = {session:String} AND request_id = {turn:String} LIMIT 1",
         turnText: "SELECT last_user_text FROM request_facts WHERE conversation_id = {session:String} AND request_id = {turn:String} LIMIT 1",
         request: "SELECT role, type, tool_name, text FROM messages WHERE request_id = {id:String} LIMIT 100; raw diagnostics read one requests row by request_id",
-        export: "SELECT request_id FROM request_facts WHERE conversation_id = {session:String} LIMIT 201; raw requests are fetched individually, at most 200 records and 4 MiB",
+        export: "Export the last request of each turn in bounded chunks; concatenate JSONL in the browser",
       };
 
       var facetOrder = [
@@ -1949,9 +1949,9 @@
         };
         start();
       }
-      async function hostApi(path) {
+      async function hostApi(path, signal) {
         var response = await fetch(session.base + path, {
-          headers: { Authorization: "Bearer " + session.key },
+          headers: { Authorization: "Bearer " + session.key }, signal: signal,
         });
         if (!response.ok) throw Error(response.status);
         return response.json();
@@ -1967,11 +1967,11 @@
         if (!loadingCount)
           document.getElementById("loading").classList.remove("open");
       }
-      async function api(path, stage, sql) {
+      async function api(path, stage, sql, signal) {
         if (stage) showLoading(stage, sql);
         try {
           return await hostApi(
-            "/v0/management/plugins/cpa-session-archive" + path,
+            "/v0/management/plugins/cpa-session-archive" + path, signal,
           );
         } finally {
           if (stage) hideLoading();
@@ -2224,20 +2224,28 @@
           : "";
         document.getElementById("activeCount").textContent = active.length;
       }
-      var sessionSearchTimer, sessionsRequest = 0;
+      var sessionSearchTimer, sessionsRequest = 0, sessionsAbort, searchClient = crypto.randomUUID();
+      window.addEventListener("pagehide",function(){
+        if(sessionsAbort) sessionsAbort.abort();
+        if(session) fetch(session.base+"/v0/management/plugins/cpa-session-archive/cancel-search?search_client="+encodeURIComponent(searchClient),{headers:{Authorization:"Bearer "+session.key},keepalive:true}).catch(function(){});
+      });
       async function loadSessions() {
         var request = ++sessionsRequest;
+ if(sessionsAbort) sessionsAbort.abort();
+ sessionsAbort = new AbortController();
         var q = new URLSearchParams();
         Object.keys(appliedFacets).forEach(function (name) {
           q.set(name, appliedFacets[name]);
         });
         q.set("limit", appliedLimit);
+ q.set("search_client",searchClient);
         if (sessionList.query) q.set("q", sessionList.query);
-        var rows = await api(
+        var rows;
+ try { rows = await api(
           "/sessions?" + q,
           t("loadingSessions"),
-          sqlTemplates.sessions,
-        );
+          sqlTemplates.sessions, sessionsAbort.signal,
+        ); } catch(error) {if(error.name==="AbortError")return;throw error;}
         if (request !== sessionsRequest) return;
         rows.forEach(function (row) {
           sessionsByID[row.session_id] = row;
@@ -2264,7 +2272,9 @@
         loadSessions();
       }
       function searchSessions(value) {
-        sessionList.query = value.trim().toLocaleLowerCase();
+        if(sessionsAbort) sessionsAbort.abort();
+ ++sessionsRequest;
+ sessionList.query = value.trim().toLocaleLowerCase();
         renderSessionRows();
         clearTimeout(sessionSearchTimer);
         sessionSearchTimer = setTimeout(loadSessions, 250);
@@ -2846,17 +2856,18 @@
         try {
           var query = new URLSearchParams({ scope: scope, format: format });
           if (scope === "session") query.set("id", detailSessionID);
-          var response = await fetch(
-            session.base +
-              "/v0/management/plugins/cpa-session-archive/export?" +
-              query,
-            { headers: { Authorization: "Bearer " + session.key } },
-          );
-          if (!response.ok)
-            throw Error(
-              "HTTP " + response.status + ": " + (await response.text()),
-            );
-          var ticket = await response.json();
+          var parts = [], ticket;
+          do {
+            var response = await fetch(session.base + "/v0/management/plugins/cpa-session-archive/export?" + query,
+              {headers:{Authorization:"Bearer "+session.key}});
+            if(!response.ok) throw Error("HTTP "+response.status+": "+await response.text());
+            ticket = await response.json();
+            if(ticket.content !== undefined) parts.push(ticket.content);
+            query.set("offset",ticket.next_offset || 0);
+            query.set("byte_offset",ticket.next_byte_offset || 0);
+            query.set("session_offset",ticket.next_session_offset || 0);
+          } while(ticket.done === false);
+          if(ticket.content !== undefined) ticket.content=parts.join("");
           var url = ticket.content !== undefined
             ? URL.createObjectURL(new Blob([ticket.content], {type: ticket.content_type}))
             : new URL(ticket.url, session.base).href;
@@ -3291,7 +3302,7 @@
           var contextRecords = await api(
             "/request-context?id=" +
               encodeURIComponent(requestID) +
-              "&limit=16",
+              "&limit=16&call_id="+encodeURIComponent(entry.callID),
             t("loadingRequest"),
             sqlTemplates.request,
           );
