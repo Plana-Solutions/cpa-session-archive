@@ -231,3 +231,31 @@ func TestHTTPResponseLimitIsExplicit(t *testing.T) {
 		t.Fatal("silently truncated response", err)
 	}
 }
+
+func TestVerifySampleRejectsEmptyDestination(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "archive.sqlite")
+	s, err := archive.OpenStore(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := fixture(t)
+	b := a
+	b.RequestID = "req2"
+	s.PutBatch([]archive.Record{a, b})
+	s.DB.Close()
+	cfg := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfg, []byte("api-keys: []"), 0600)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "hostName()") {
+			io.WriteString(w, "cpa-archive-import-sample\n")
+		}
+	}))
+	defer server.Close()
+	state := filepath.Join(dir, "state")
+	save(state, checkpoint{UpperID: 2})
+	err = VerifySample(context.Background(), Options{URL: server.URL, SQLite: path, State: state, Config: cfg, AuthDir: dir}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "requests missing") {
+		t.Fatal("empty sample accepted", err)
+	}
+}
