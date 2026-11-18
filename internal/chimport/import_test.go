@@ -24,7 +24,7 @@ func fixture(t *testing.T) archive.Record {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return archive.Record{RequestID: "req1", TraceID: "trace", SessionID: "session", KeyID: strings.Repeat("a", 64), StartedAt: ts, CompletedAt: ts.Add(time.Second), SourceFormat: "openai-response", Stream: true, Outcome: "succeeded", StatusCode: 200, OriginalRequest: []byte(`{"input":"hello"}`), Response: []byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":3,\"total_tokens\":13}}}\n\n"), Metadata: map[string]any{"request_path": "/v1/responses"}, Facets: map[string][]string{"header.authorization": {"Bearer secret"}}}
+	return archive.Record{RequestID: "req1", TraceID: "trace", SessionID: "session", KeyID: strings.Repeat("a", 64), StartedAt: ts, CompletedAt: ts.Add(time.Second), Model: "m", SourceFormat: "openai-response", Stream: true, Outcome: "succeeded", StatusCode: 200, OriginalRequest: []byte(`{"input":"hello"}`), Response: []byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":3,\"total_tokens\":13}}}\n\n"), Metadata: map[string]any{"request_path": "/v1/responses"}, Facets: map[string][]string{"header.authorization": {"Bearer secret"}}}
 }
 func TestMappingTimezoneUsageAndRedaction(t *testing.T) {
 	r, err := redact.New()
@@ -110,6 +110,13 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 	var insertedRequests, insertedUsage int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("query")
+		if strings.Contains(q, "system.disks") {
+			io.WriteString(w, `{"free":100000000000}`)
+			return
+		}
+		if strings.Contains(q, "system.parts") {
+			return
+		}
 		if strings.HasPrefix(q, "SELECT") {
 			if strings.Contains(q, "cliproxy.requests") {
 				for id, imported := range requests {
@@ -133,7 +140,6 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 		raw, _ := io.ReadAll(z)
 		z.Close()
 		if strings.Contains(q, "cliproxy.usage") && failUsage {
-			failUsage = false
 			w.WriteHeader(500)
 			return
 		}
@@ -155,6 +161,11 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 	if err = Run(context.Background(), o); err == nil {
 		t.Fatal("expected interrupted usage insert")
 	}
+	state, err := loadState(o, s.DB)
+	if err != nil || state.LastID != 0 {
+		t.Fatal("checkpoint advanced after failed insert", err)
+	}
+	failUsage = false
 	if err = Run(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
