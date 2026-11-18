@@ -59,8 +59,8 @@ test("long previews remain lightweight while turn details expose full content", 
   await expect(page.locator("#turnPageInfo")).toContainText("第 1 / 5 页");
 
   await page.locator(".process-step").first().click();
-  await expect(page.getByText("shell_command · 查看完整调用").first()).toBeVisible();
-  await page.getByText("shell_command · 查看完整调用").first().click();
+  await expect(page.locator(".process-step[open]").getByText("shell_command · 查看完整调用").first()).toBeVisible();
+  await page.locator(".process-step[open]").getByText("shell_command · 查看完整调用").first().click();
   await expect(page).toHaveURL(/\/tools\/call-long-output$/);
   await expect(page.locator("#subDetail")).not.toContainText(
     "END-OF-LONG-TOOL-OUTPUT",
