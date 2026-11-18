@@ -290,6 +290,39 @@ func TestClickHouseRound5(t *testing.T) {
 
 	})
 
+	t.Run("bounded final answer source", func(t *testing.T) {
+		reply := strings.Repeat("answer", 4000) + "COMPLETE-FINAL-ANSWER"
+		output, _ := json.Marshal(map[string]any{"output": []map[string]string{{"role": "assistant", "content": reply}}})
+		seed("final-source", "final-session", 100, 200, `{"input":[{"role":"user","content":"question"}]}`, string(output), map[string]any{"reply_text": reply, "msg_text": []string{"question", reply}})
+		for _, q := range []url.Values{{"session_id": {"final-session"}}, {"session_id": {"final-session"}, "turn_id": {"final-source"}}} {
+			got, err := c.read("turns", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(got)
+			var page struct {
+				Turns []struct {
+					FinalText string `json:"final_text"`
+					Truncated bool   `json:"final_truncated"`
+					Request   string `json:"final_request"`
+				}
+				Turn struct {
+					FinalText string `json:"final_text"`
+					Truncated bool   `json:"final_truncated"`
+					Request   string `json:"final_request"`
+				}
+			}
+			json.Unmarshal(b, &page)
+			answer := page.Turn
+			if len(page.Turns) > 0 {
+				answer = page.Turns[0]
+			}
+			if !answer.Truncated || answer.Request != "final-source" || len([]rune(answer.FinalText)) != 12000 {
+				t.Fatal("bounded final answer lacks a full-response target")
+			}
+		}
+	})
+
 }
 
 func TestTrainingSkipsThinkingBlocks(t *testing.T) {

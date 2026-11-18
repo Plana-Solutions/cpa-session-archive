@@ -58,3 +58,32 @@ test('truncated native events offer full stored diagnostics', async ({ page }) =
   await expect(page.locator('#subDetail')).toContainText('shell · native-call');
   await expect(page.locator('#subDetail button')).toHaveCount(1);
 });
+
+for (const surface of ['summary', 'detail']) {
+  test('bounded final answers open full diagnostics from ' + surface, async ({ page }) => {
+    await open(page);
+    await page.evaluate(async (surface) => {
+      const turn = { turn_id: 'long-turn', user_text: 'question', final_text: 'x'.repeat(12000),
+        final_truncated: true, final_request: 'source-response', requests: 1, last_at: '2026-11-18T12:00:00Z' };
+      const originalApi = api;
+      api = async (path, ...args) => {
+        if (path.startsWith('/turns?')) return { turn, records: [], total: 0, limit: 10, offset: 0 };
+        if (path.startsWith('/requests?')) return { request_id: 'source-response', original_request: btoa('{}'),
+          response: btoa(JSON.stringify({ output: [{ role: 'assistant', content: 'x'.repeat(24000) + 'REAL-ANSWER-END' }] })) };
+        return originalApi(path, ...args);
+      };
+      detailSessionID = 'final-session';
+      currentTurnID = '';
+      currentRequestID = 'unrelated-request';
+      if (surface === 'summary') {
+        showSubDetail();
+        document.querySelector('#subDetail').innerHTML = renderTurnSummary(turn, 1);
+      } else {
+        await showTurn('final-session', 'long-turn');
+      }
+    }, surface);
+    const area = page.locator(surface === 'summary' ? '#subDetail .turn-final' : '#turnPrimary .turn-final');
+    await area.getByRole('button', { name: '展开完整内容', exact: true }).click();
+    await expect(page).toHaveURL(/requests\/source-response\/raw\/response$/);
+  });
+}
