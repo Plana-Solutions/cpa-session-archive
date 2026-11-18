@@ -138,6 +138,30 @@ func TestClickHouseRound5(t *testing.T) {
 			}
 		}
 	})
+	t.Run("search full prompt middle", func(t *testing.T) {
+		seed("middle", "middle-session", 60, 200, `{}`, `{}`, map[string]any{"msg_text": []string{strings.Repeat("a", 5000) + "unique-middle-needle" + strings.Repeat("b", 110000), "answer"}})
+		for _, limit := range []string{"20", "641"} {
+			got, err := c.read("sessions", url.Values{"q": {"unique-middle-needle"}, "limit": {limit}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.([]archiveSession)) != 1 {
+				t.Fatal("complete prompt middle missing from search")
+			}
+		}
+	})
+	t.Run("skip unusable training snapshot", func(t *testing.T) {
+		extra := map[string]any{}
+		for _, field := range []string{"msg_direction", "msg_position", "msg_role", "msg_type", "msg_text", "msg_tool_name", "msg_call_id", "msg_arguments", "msg_is_error", "msg_text_hash"} {
+			extra[field] = []any{}
+		}
+		seed("empty-training", "empty-training", 70, 200, `{}`, `{}`, extra)
+		content, _ := collectExport(t, c, url.Values{"id": {"empty-training"}, "format": {"sft"}})
+		if strings.TrimSpace(content) != "" {
+			t.Fatalf("unusable training example emitted: %s", content)
+		}
+	})
+
 }
 
 func TestTrainingSkipsThinkingBlocks(t *testing.T) {
