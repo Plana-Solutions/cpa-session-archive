@@ -24,6 +24,7 @@ jobs:
           chmod +x /tmp/clickhouse
           echo "CLICKHOUSE_BINARY=/tmp/clickhouse" >> "$GITHUB_ENV"
       - run: go test ./...
+      - run: go test -race ./internal/archive -run '^(TestSerializedExport|TestExportCacheConcurrency)'
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps --only-shell chromium
       - run: bun run test:e2e

@@ -35,6 +35,8 @@ type clickhouseReader struct {
 	externalChecked time.Time
 	externalPresent bool
 	slots           chan struct{}
+	exportMu        sync.Mutex
+	exportCache     *exportCacheEntry
 }
 type activeSearch struct{ cancel context.CancelFunc }
 

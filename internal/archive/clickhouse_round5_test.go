@@ -420,4 +420,21 @@ func TestClickHouseExportReadBudget(t *testing.T) {
 			})
 		}
 	}
+	t.Run("native replacement invalidates serialized record", func(t *testing.T) {
+		c.client.Transport = http.DefaultTransport
+		row := map[string]any{"session_id": "cache-version", "ts": at, "ingested_at": at, "position": 0, "role": "assistant", "type": "message", "text": "original version"}
+		chInsert(t, c, "external_messages", row)
+		q := url.Values{"id": {"external:cache-version"}, "format": {"sft"}, "from": {time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano)}, "to": {time.Now().UTC().Format(time.RFC3339Nano)}}
+		got, err := c.read("export", q)
+		if err != nil || !strings.Contains(fmt.Sprint(got), "original version") {
+			t.Fatalf("original projection missing: %v", err)
+		}
+		row["ingested_at"] = time.Now().UTC().Format("2006-01-02 15:04:05.999999999")
+		row["text"] = "replacement version"
+		chInsert(t, c, "external_messages", row)
+		got, err = c.read("export", q)
+		if err != nil || !strings.Contains(fmt.Sprint(got), "replacement version") || strings.Contains(fmt.Sprint(got), "original version") {
+			t.Fatalf("replacement returned stale cached projection: %v", err)
+		}
+	})
 }

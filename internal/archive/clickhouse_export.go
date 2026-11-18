@@ -76,31 +76,43 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 	id := sessions[0].ID
 	w.params.Set("session", strings.TrimPrefix(id, "external:"))
 	var content []byte
+	var record *serializedExport
+	key := exportRecordKey{Format: format, Session: id, From: w.params.Get("from"), To: w.params.Get("to"), Offset: offset}
 	endSession := false
 	if strings.HasPrefix(id, "external:") {
-		var rows []externalMessage
+		var rows []struct {
+			externalMessage
+			Version string `json:"cache_version"`
+		}
 		externalFilter := ""
 		if format == "sft" {
 			externalFilter = " AND type NOT IN ('reasoning','thinking')"
 		}
-		err = c.query(ctx, `SELECT `+externalMetadataColumns+` FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
+		err = c.query(ctx, `SELECT `+externalMetadataColumns+`,toString(ingested_at) AS cache_version FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
-		if len(rows) > 0 {
-			rows[0].Text, err = c.externalText(ctx, w, rows[0].Position)
-			if err != nil {
-				return nil, err
-			}
-		}
 		if len(rows) == 0 {
 			endSession = true
-		} else if format == "sft" {
-			content, _ = json.Marshal(map[string]string{"role": rows[0].Role, "content": rows[0].Text})
 		} else {
-			r := externalView(rows[0])
-			body, _ := json.Marshal(rows[0])
-			content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "source_format": "external-native-event", "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": body, "response": []byte{}})
+			m := rows[0].externalMessage
+			key.Source = strconv.FormatUint(uint64(m.Position), 10)
+			key.Started = m.TS.UnixNano()
+			key.Version = rows[0].Version
+			record = c.cachedExport(key)
+			if record == nil {
+				m.Text, err = c.externalText(ctx, w, m.Position)
+				if err != nil {
+					return nil, err
+				}
+				if format == "sft" {
+					content, _ = json.Marshal(map[string]string{"role": m.Role, "content": m.Text})
+				} else {
+					r := externalView(m)
+					body, _ := json.Marshal(m)
+					content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "source_format": "external-native-event", "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": body, "response": []byte{}})
+				}
+			}
 		}
 	} else {
 		var rows []clickhouseTurn
@@ -120,30 +132,35 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		} else {
 			t := rows[0]
 			t.SessionID = id
-			rw := w
-			rw.params = cloneValues(w.params)
-			rw.params.Set("from", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
-			rw.params.Set("to", t.FirstAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
-			rw.params.Set("id", t.TurnID)
-			if format == "archive" {
-				r, e := c.rawRequest(ctx, rw, t)
-				if e != nil {
-					return nil, e
-				}
-				content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "trace_id": r.TraceID, "model": r.Model, "requested_model": r.RequestedModel, "source_format": r.SourceFormat, "outcome": r.Outcome, "status_code": r.StatusCode, "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": base64.StdEncoding.EncodeToString(r.OriginalRequest), "response": base64.StdEncoding.EncodeToString(r.Response)})
-			} else {
-				r, e := c.rawRequest(ctx, rw, t)
-				if e != nil {
-					return nil, e
-				}
-				content, err = c.trainingSnapshot(ctx, rw, r)
-				if err != nil {
-					return nil, err
+			key.Source = t.TurnID
+			key.Started = t.FirstAt.UnixNano()
+			record = c.cachedExport(key)
+			if record == nil {
+				rw := w
+				rw.params = cloneValues(w.params)
+				rw.params.Set("from", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
+				rw.params.Set("to", t.FirstAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
+				rw.params.Set("id", t.TurnID)
+				if format == "archive" {
+					r, e := c.rawRequest(ctx, rw, t)
+					if e != nil {
+						return nil, e
+					}
+					content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "trace_id": r.TraceID, "model": r.Model, "requested_model": r.RequestedModel, "source_format": r.SourceFormat, "outcome": r.Outcome, "status_code": r.StatusCode, "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": base64.StdEncoding.EncodeToString(r.OriginalRequest), "response": base64.StdEncoding.EncodeToString(r.Response)})
+				} else {
+					r, e := c.rawRequest(ctx, rw, t)
+					if e != nil {
+						return nil, e
+					}
+					content, err = c.trainingSnapshot(ctx, rw, r)
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
 	}
-	if !endSession && format == "sft" && !strings.HasPrefix(id, "external:") && len(content) == 0 {
+	if !endSession && record == nil && format == "sft" && !strings.HasPrefix(id, "external:") && len(content) == 0 {
 		ticket["next_offset"] = offset + 1
 		return ticket, nil
 	}
@@ -155,21 +172,23 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		ticket["next_offset"] = 0
 		return ticket, nil
 	}
-	if format == "sft" && strings.HasPrefix(id, "external:") {
+	if record == nil && format == "sft" && strings.HasPrefix(id, "external:") {
 		if offset == 0 {
 			content = append([]byte(`{"messages":[`), content...)
 		} else if len(content) > 0 {
 			content = append([]byte(","), content...)
 		}
 	}
-	// The cursor counts Unicode characters, matching the existing download protocol.
-	text := []rune(string(content))
-	if part > len(text) {
-		return nil, badQuery("export cursor exceeds record")
+	if record == nil {
+		record = newSerializedExport(string(content))
+		c.rememberExport(key, record)
 	}
-	end := min(part+rawChunk, len(text))
-	ticket["content"] = string(text[part:end])
-	if end == len(text) {
+	fragment, end, err := record.chunk(part)
+	if err != nil {
+		return nil, err
+	}
+	ticket["content"] = fragment
+	if end == record.characters {
 		if format == "archive" || !strings.HasPrefix(id, "external:") {
 			ticket["content"] = ticket["content"].(string) + "\n"
 		}
