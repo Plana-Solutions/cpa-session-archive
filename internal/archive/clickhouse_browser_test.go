@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +19,7 @@ func TestClickHouseBrowserServer(t *testing.T) {
 		t.Skip("browser server opt-in required")
 	}
 	c := localClickHouse(t)
+	c.client.Transport = browserFixtureTransport{t}
 	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
 		b, err := os.ReadFile("testdata/clickhouse/" + file)
 		if err != nil {
@@ -104,4 +107,21 @@ func TestClickHouseBrowserServer(t *testing.T) {
 	server := &http.Server{Addr: "127.0.0.1:4173", Handler: mux}
 	t.Cleanup(func() { server.Close() })
 	t.Fatal(server.ListenAndServe())
+}
+
+// This transport only observes the synthetic browser fixture, which has no reader credentials.
+type browserFixtureTransport struct{ t *testing.T }
+
+func (s browserFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && resp.StatusCode != http.StatusOK {
+		body, e := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if e != nil {
+			return nil, e
+		}
+		s.t.Logf("ClickHouse fixture failure HTTP %d: %s", resp.StatusCode, body)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	return resp, err
 }
