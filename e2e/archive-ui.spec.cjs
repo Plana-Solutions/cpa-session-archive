@@ -103,10 +103,20 @@ test("system instructions and diagnostics are routed and loaded on demand", asyn
 test("bounded session export exposes a reusable JSONL download", async ({
   page,
 }) => {
+  const exportError = new Promise((resolve,reject)=> {
+    page.on("dialog",async dialog=>{const message=dialog.message();await dialog.dismiss();reject(new Error(message));});
+    page.on("pageerror",reject);
+  });
+  page.on("response",async response=>{
+    if(response.url().includes("/export?")) {
+      console.log("EXPORT",response.status(),response.url());
+      if(!response.ok()) console.log("EXPORT ERROR",await response.text());
+    }
+  });
   await page.locator(".session-row").first().click();
   const sessionDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载当前 Session" }).click();
-  const downloaded = await sessionDownload;
+  const downloaded = await Promise.race([sessionDownload,exportError]);
   expect(downloaded.suggestedFilename()).toBe(
     "session.archive.jsonl",
   );
@@ -128,7 +138,7 @@ test("bounded session export exposes a reusable JSONL download", async ({
   await page.locator("#allExportFormat").selectOption("sft");
   const allDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载全库" }).click();
-  expect((await allDownload).suggestedFilename()).toBe(
+  expect((await Promise.race([allDownload,exportError])).suggestedFilename()).toBe(
     "cpa-session-archive.all.sft.jsonl",
   );
   await expect(page.locator("#allDownloadNotice a")).toHaveText(
