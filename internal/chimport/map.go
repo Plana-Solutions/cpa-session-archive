@@ -84,6 +84,10 @@ func mapRecord(a archive.Record, r *redact.Redactor) (requestRow, usageRow, erro
 	if raw, err := json.Marshal(a.Metadata); err == nil {
 		usageFrom(&u, raw)
 	}
+	if a.SourceFormat == "claude" {
+		u.InputTokens += u.CacheReadTokens + u.CacheCreationTokens
+		u.TotalTokens = max(u.TotalTokens, u.InputTokens+u.OutputTokens)
+	}
 	if u.TotalTokens == 0 {
 		u.TotalTokens = u.InputTokens + u.OutputTokens
 	}

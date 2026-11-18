@@ -221,3 +221,13 @@ func TestBodyPreloadIntegration(t *testing.T) {
 		t.Fatal("committed blob was inserted again", n, err)
 	}
 }
+
+func TestHTTPResponseLimitIsExplicit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "12345") }))
+	defer server.Close()
+	c := newClient(server.URL, "", "")
+	c.responseLimit = 4
+	if b, err := c.call(context.Background(), "SELECT 1", nil, nil, false); err == nil || b != nil {
+		t.Fatal("silently truncated response", err)
+	}
+}

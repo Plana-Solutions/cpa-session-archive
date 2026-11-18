@@ -188,12 +188,15 @@ func TestUsageFormats(t *testing.T) {
 		name, body           string
 		input, output, cache int64
 	}{
-		{"claude", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":8}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n", 12, 5, 8},
+		{"claude", "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":8}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n", 20, 5, 8},
 		{"gemini", `{"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":4,"cachedContentTokenCount":9}}`, 20, 4, 9},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := fixture(t)
 			a.Response = []byte(tc.body)
+			if tc.name == "claude" {
+				a.SourceFormat = "claude"
+			}
 			_, u, err := mapRecord(a, nil)
 			if err != nil {
 				t.Fatal(err)

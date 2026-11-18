@@ -19,6 +19,7 @@ import (
 type client struct {
 	endpoint, user, password string
 	http                     *http.Client
+	responseLimit            int64
 }
 
 func (c *client) call(ctx context.Context, q string, params url.Values, body io.Reader, compressed bool) ([]byte, error) {
@@ -55,7 +56,14 @@ func (c *client) call(ctx context.Context, q string, params url.Values, body io.
 			return transientError{"ClickHouse transport failed"}
 		}
 		defer resp.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		limit := c.responseLimit
+		if limit == 0 {
+			limit = 128 << 20
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		if int64(len(b)) > limit {
+			return fmt.Errorf("ClickHouse response exceeds %d bytes", limit)
+		}
 		if err != nil {
 			return transientError{"ClickHouse read failed"}
 		}
@@ -227,7 +235,7 @@ func (c *client) existing(ctx context.Context, table string, ids []string, lo, h
 	return out, nil
 }
 func newClient(endpoint, user, password string) *client {
-	return &client{endpoint, user, password, &http.Client{Timeout: 3 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &client{endpoint: endpoint, user: user, password: password, http: &http.Client{Timeout: 3 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 const externalDDL = `CREATE TABLE IF NOT EXISTS cliproxy.external_messages (

@@ -91,6 +91,8 @@ assert all(r["byte_exact"] for r in expected_rows.values())
 live = {r["request_id"]: r for r in map(json.loads, open(os.environ["LIVE_FACTS"]))} if os.environ.get("LIVE_FACTS") else {}
 body_ids = set()
 facts = {}
+usage_ids = set()
+request_ids = set()
 missing_body = leaks = scanned = no_model = count_tokens = bad_count_tokens = codex_rows = bad_codex = 0
 counts = {}
 clients = {}
@@ -101,6 +103,8 @@ for table in ["requests", "usage", "external_messages", "request_facts"]:
     field = "session_id" if table == "external_messages" else "request_id"
     for row in filtered(table, field, values):
         if table == "requests":
+            assert row["request_id"] not in request_ids, "duplicate raw request"
+            request_ids.add(row["request_id"])
             if row["request_body"].strip() or row.get("body_len", 0):
                 body_ids.add(row["request_id"])
             else:
@@ -108,6 +112,9 @@ for table in ["requests", "usage", "external_messages", "request_facts"]:
             no_model += not row["model"] and not row["requested_model"]
             residual = base64.b64decode(row.get("body_residual", "")).decode("utf-8", errors="replace")
             leaks += any(v in residual for v in variants)
+        if table == "usage":
+            assert row["request_id"] not in usage_ids, "duplicate usage request"
+            usage_ids.add(row["request_id"])
         if table == "request_facts":
             assert row["request_id"] not in facts, "duplicate derived request"
             facts[row["request_id"]] = row["conversation_id"]
@@ -162,6 +169,8 @@ assert expected_mismatches == 0, "imported conversation_id differs from released
 assert leaks == 0, "secret leak detected (values suppressed)"
 assert no_model == 0, "empty model rows imported"
 assert set(facts) == set(ids), "deriver did not cover all requests"
+assert usage_ids == {"archive-v1:" + rid for rid in ids}, "usage IDs do not reconcile"
+assert request_ids == set(ids), "raw request IDs do not reconcile"
 assert counts["requests"] == len(ids), "request count differs"
 assert counts["external_messages"] == expected_events, "native events do not reconcile"
 assert not bad_count_tokens and not bad_codex, "identity prefix parity failed"
