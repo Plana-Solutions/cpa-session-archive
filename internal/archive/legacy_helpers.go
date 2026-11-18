@@ -403,7 +403,7 @@ func meaningfulSummary(value string) string {
 func meaningfulUserText(value string) string {
 	value = strings.TrimSpace(html.UnescapeString(value))
 	lower := strings.ToLower(value)
-	for _, marker := range []string{"\nuser prompt:\n", "\r\nuser prompt:\r\n"} {
+	for _, marker := range []string{"\nuser prompt:\n", "\r\nuser prompt:\r\n", "\nuser message:\n", "\r\nuser message:\r\n"} {
 		if pos := strings.LastIndex(lower, marker); pos >= 0 {
 			value = strings.TrimSpace(value[pos+len(marker):])
 			lower = strings.ToLower(value)
@@ -413,7 +413,7 @@ func meaningfulUserText(value string) string {
 	for {
 		lower = strings.ToLower(value)
 		matched := false
-		for _, tag := range []string{"environment_context", "environment_info", "workspace_info", "in-app-browser-context", "app-context", "context", "editorcontext", "reminderinstructions", "codex_internal_context"} {
+		for _, tag := range []string{"environment_context", "environment_info", "workspace_info", "in-app-browser-context", "app-context", "context", "editorcontext", "reminderinstructions", "codex_internal_context", "system-reminder", "command-name", "command-message", "command-args", "local-command-caveat", "local-command-stdout", "skill"} {
 			open := "<" + tag
 			if !strings.HasPrefix(lower, open) {
 				continue
@@ -438,6 +438,12 @@ func meaningfulUserText(value string) string {
 		if pos := strings.Index(lower, marker); pos >= 0 {
 			value = strings.TrimSpace(value[pos+len(marker):])
 		} else {
+			return ""
+		}
+	}
+	lower = strings.ToLower(value)
+	for _, prefix := range []string{"# agents.md instructions", "codebase and user instructions are shown below.", "this session is being continued from a previous conversation", "base directory for this skill:"} {
+		if strings.HasPrefix(lower, prefix) {
 			return ""
 		}
 	}

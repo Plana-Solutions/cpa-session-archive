@@ -2277,7 +2277,7 @@
  sessionList.query = value.trim().toLocaleLowerCase();
         renderSessionRows();
         clearTimeout(sessionSearchTimer);
-        sessionSearchTimer = setTimeout(loadSessions, 250);
+        sessionSearchTimer = setTimeout(loadSessions, 400);
       }
       function relativeTime(value) {
         var minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
@@ -2301,6 +2301,7 @@
         document.getElementById("rows").innerHTML = rows.length ? rows.map(function (row) {
           var title = titleText(row.summary || row.project);
           var badges = ExternalArchive.badge(row);
+          if (row.continued) badges += '<span class="kind-badge">continued</span>';
           if ((row.thread_sources || []).includes("system")) badges += '<span class="kind-badge">' + esc(t("systemTask")) + '</span>';
           if ((row.kinds || []).length === 1 && row.kinds[0] === "prewarm") badges += '<span class="kind-badge">' + esc(t("kindPrewarm")) + '</span>';
           return '<a class="session-row" href="#/sessions/' + encodeURIComponent(row.session_id) + '"><div class="session-copy"><div class="conversation-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="conversation-meta">' +
@@ -2424,7 +2425,7 @@
       }
       function renderTurnSummary(turn, number) {
         return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
-          esc(t("userRole")) + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
+          esc(t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
           renderExpandableTurnText(turn.final_text || t("noFinalAnswer"), !turn.final_text, true) +
           '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
           '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';

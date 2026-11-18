@@ -47,6 +47,7 @@ func localClickHouse(t *testing.T) *clickhouseReader {
 	}
 	cmd := exec.Command(binary, "server", "--config-file="+conf)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CLICKHOUSE_WATCHDOG_ENABLE=0")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -230,8 +231,71 @@ func TestClickHouseHandlers(t *testing.T) {
 		call("insights", url.Values{"from": {"bad-date"}}, 400)
 		call("sessions", url.Values{"limit": {"1001"}}, 400)
 		call("sessions", url.Values{"q": {"x' OR 1=1 --"}}, 200)
+		for _, literal := range []string{"%", "_", `\`} {
+			json.Unmarshal(call("sessions", url.Values{"q": {literal}}, 200), &rows)
+			if len(rows) != 0 {
+				t.Fatalf("search treated %q as a wildcard", literal)
+			}
+		}
 		call("external-sources", nil, 200)
 	})
+	t.Run("injected context titles and turn starts", func(t *testing.T) {
+		for _, fixture := range []struct {
+			id        string
+			texts     []string
+			want      string
+			continued bool
+		}{
+			{"claude:preamble", []string{"<system-reminder>Codebase and user instructions are shown below. IMPORTANT: obey.</system-reminder>", "<command-name>/poteto-mode</command-name>", "Base directory for this skill: /plugins/poteto-mode", "Fix the Claude archive"}, "Fix the Claude archive", false},
+			{"codex:preamble", []string{"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>Use tests</INSTRUCTIONS>", "<environment_context><cwd>/repo</cwd></environment_context>", "Fix the Codex archive"}, "Fix the Codex archive", false},
+			{"claude:continued", []string{"This session is being continued from a previous conversation that ran out of context. Summary: old details", "<system-reminder>Read tool result</system-reminder>", "Resume the archive tests"}, "Resume the archive tests", true},
+		} {
+			dirs, roles, types := []string{}, []string{}, []string{}
+			for range fixture.texts {
+				dirs = append(dirs, "input")
+				roles = append(roles, "user")
+				types = append(types, "message")
+			}
+			chInsert(t, c, "request_facts", map[string]any{"request_id": fixture.id, "conversation_id": fixture.id, "started_at": ts, "kind": "messages", "last_user_text": "injected last-user preamble", "msg_direction": dirs, "msg_role": roles, "msg_type": types, "msg_text": fixture.texts})
+			value, err := c.read("sessions", url.Values{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, row := range value.([]archiveSession) {
+				if row.SessionID == fixture.id {
+					found = true
+					if row.Summary != fixture.want || row.Continued != fixture.continued {
+						t.Fatalf("session %+v", row)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing fixture session")
+			}
+			value, err = c.read("turns", url.Values{"session_id": {fixture.id}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			turns := value.(map[string]any)["turns"].([]clickhouseTurn)
+			if len(turns) != 1 || turns[0].UserText != fixture.want || turns[0].Continued != fixture.continued {
+				t.Fatalf("turns %+v", turns)
+			}
+		}
+	})
+
+	t.Run("full genuine turn text", func(t *testing.T) {
+		full := "Review " + strings.Repeat("long prompt ", 6000) + "end"
+		chInsert(t, c, "request_facts", map[string]any{"request_id": "long-text", "conversation_id": "claude:long-text", "started_at": ts, "kind": "messages", "last_user_text": "injected preamble", "msg_direction": []string{"input", "input"}, "msg_role": []string{"user", "user"}, "msg_type": []string{"message", "message"}, "msg_text": []string{"<system-reminder>injected context</system-reminder>", full}})
+		value, err := c.read("turn-text", url.Values{"session_id": {"claude:long-text"}, "turn_id": {"long-text"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value.(map[string]string)["text"] != full {
+			t.Fatal("full text was truncated or retained injected context")
+		}
+	})
+
 	b, e := os.ReadFile("testdata/clickhouse/external.sql")
 	if e != nil {
 		t.Fatal(e)

@@ -133,3 +133,19 @@ func TestReadCancellation(t *testing.T) {
 		t.Fatal("disconnect did not cancel")
 	}
 }
+
+func TestSearchQueryBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("max_execution_time") != "3" || q.Get("max_result_bytes") != "8388608" {
+			t.Errorf("search limits %v", q)
+		}
+		w.Write([]byte("{}\n"))
+	}))
+	defer server.Close()
+	c := &clickhouseReader{config: pluginConfig{URL: server.URL}, client: server.Client()}
+	var rows []map[string]any
+	if err := c.query(context.Background(), "SELECT 1", url.Values{"search": {"term"}}, &rows); err != nil {
+		t.Fatal(err)
+	}
+}

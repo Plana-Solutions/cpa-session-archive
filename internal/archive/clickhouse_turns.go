@@ -18,6 +18,8 @@ type clickhouseTurn struct {
 	OutputTokens    int64  `json:"output_tokens"`
 	ReasoningTokens int64  `json:"reasoning_tokens"`
 	TotalTokens     int64  `json:"total_tokens"`
+	TitleRequest    string `json:"title_request,omitempty"`
+	Continued       bool   `json:"continued,omitempty"`
 	Client          string `json:"client"`
 	Kind            string `json:"kind"`
 	InputItems      int    `json:"input_items"`
@@ -46,7 +48,7 @@ const numberedTurns = `WITH steps AS (
  SELECT *,if(turn_id!='',turn_id,first_value(request_id) OVER (PARTITION BY turn_no ORDER BY started_at,request_id)) AS turn_key FROM numbered
 ) `
 const groupedTurnColumns = `turn_key AS turn_id,any(conversation_id) AS session_id,
- substringUTF8(argMin(` + turnUserText + `,(started_at,request_id)),1,1600) AS user_text,
+ argMin(request_id,(started_at,request_id)) AS title_request,
  substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!=''),1,12000) AS final_text,
  count() AS requests,min(started_at) AS first_at,max(addMilliseconds(started_at,f.duration_ms)) AS last_at,
  argMax(key_id,(started_at,request_id)) AS key_id,argMax(f.model,(started_at,request_id)) AS model,
@@ -83,17 +85,16 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 		if q.Get("turn_id") == "" {
 			return nil, badQuery("turn_id is required")
 		}
-		var rows []struct {
-			Text string `json:"text"`
-		}
-		err = c.query(ctx, numberedTurns+`SELECT `+turnUserText+` AS text FROM grouped WHERE turn_key={turn:String} ORDER BY started_at,request_id LIMIT 1`, w.params, &rows)
+		var rows []displayText
+		err = c.query(ctx, numberedTurns+`SELECT request_id,arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32) AS texts FROM grouped WHERE turn_key={turn:String} ORDER BY started_at,request_id LIMIT 1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) == 0 {
 			return nil, archiveNotFound
 		}
-		return map[string]string{"status": "ok", "text": rows[0].Text}, nil
+		text, _ := firstUserText(rows[0].Texts)
+		return map[string]string{"status": "ok", "text": text}, nil
 	}
 	join := strings.Replace(factsWithUsage, "{db:Identifier}.request_facts AS f", "grouped AS f", 1)
 	filter := ""
@@ -112,6 +113,19 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 	err = c.query(ctx, numberedTurns+`SELECT `+groupedTurnColumns+` `+join+filter+` GROUP BY turn_key`+page, w.params, &rows)
 	if err != nil {
 		return nil, err
+	}
+	titleIDs := []string{}
+	for _, row := range rows {
+		titleIDs = append(titleIDs, row.TitleRequest)
+	}
+	texts, err := c.displayTexts(ctx, w, titleIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].UserText, rows[i].Continued = firstUserText(texts[rows[i].TitleRequest].Texts)
+		text := []rune(rows[i].UserText)
+		rows[i].UserText = string(text[:min(1600, len(text))])
 	}
 	if filter != "" {
 		if len(rows) == 0 {
@@ -369,6 +383,11 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		body, _ := json.Marshal(map[string]any{"output": output})
 		return []Record{{RequestID: id, SessionID: t.SessionID, Response: body}}, nil
 	}
+	return c.rawRequest(ctx, w, t)
+}
+
+// Keep raw storage reads here so a future lossless body format changes one boundary.
+func (c *clickhouseReader) rawRequest(ctx context.Context, w readWindow, t clickhouseTurn) (Record, error) {
 	var rows []struct {
 		RequestID      string    `json:"request_id"`
 		TraceID        string    `json:"trace_id"`
@@ -382,17 +401,17 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		ResponseBody   string    `json:"response_body"`
 		ResponseChunks []string  `json:"response_chunks"`
 	}
-	err = c.query(ctx, `SELECT request_id,trace_id,source_format,requested_model,stream,error,started_at,completed_at,request_body,response_body,response_chunks FROM {db:Identifier}.requests WHERE `+timeFilter+` AND request_id={id:String} LIMIT 1`, w.params, &rows)
+	err := c.query(ctx, `SELECT request_id,trace_id,source_format,requested_model,stream,error,started_at,completed_at,request_body,response_body,response_chunks FROM {db:Identifier}.requests WHERE `+timeFilter+` AND request_id={id:String} LIMIT 1`, w.params, &rows)
 	if err != nil {
-		return nil, err
+		return Record{}, err
 	}
 	if len(rows) == 0 {
-		return nil, archiveNotFound
+		return Record{}, archiveNotFound
 	}
 	r := rows[0]
 	response := r.ResponseBody
 	if response == "" {
 		response = strings.Join(r.ResponseChunks, "")
 	}
-	return Record{RequestID: id, TraceID: r.TraceID, SessionID: t.SessionID, KeyID: t.KeyID, Summary: t.UserText, Model: t.Model, RequestedModel: r.RequestedModel, SourceFormat: r.SourceFormat, Stream: r.Stream, Outcome: t.Outcome, StatusCode: t.StatusCode, Error: r.Error, StartedAt: r.StartedAt, CompletedAt: r.CompletedAt, OriginalRequest: []byte(r.RequestBody), Response: []byte(response)}, nil
+	return Record{RequestID: r.RequestID, TraceID: r.TraceID, SessionID: t.SessionID, KeyID: t.KeyID, Summary: t.UserText, Model: t.Model, RequestedModel: r.RequestedModel, SourceFormat: r.SourceFormat, Stream: r.Stream, Outcome: t.Outcome, StatusCode: t.StatusCode, Error: r.Error, StartedAt: r.StartedAt, CompletedAt: r.CompletedAt, OriginalRequest: []byte(r.RequestBody), Response: []byte(response)}, nil
 }

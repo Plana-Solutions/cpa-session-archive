@@ -98,6 +98,9 @@ func (c *clickhouseReader) query(ctx context.Context, sql string, params url.Val
 	q.Set("output_format_json_quote_64bit_integers", "0")
 	q.Set("date_time_output_format", "iso")
 	q.Set("max_execution_time", "55")
+	if params.Get("search") != "" {
+		q.Set("max_execution_time", "3")
+	}
 	q.Set("max_result_bytes", strconv.Itoa(resultLimit))
 	q.Set("result_overflow_mode", "throw")
 	q.Set("wait_end_of_query", "1")
@@ -271,6 +274,7 @@ const factsWithUsage = `FROM {db:Identifier}.request_facts AS f LEFT JOIN
 
 type archiveSession struct {
 	SessionID    string    `json:"session_id"`
+	Continued    bool      `json:"continued,omitempty"`
 	Summary      string    `json:"summary"`
 	Project      string    `json:"project"`
 	KeyID        string    `json:"key_id"`
@@ -289,6 +293,7 @@ type archiveSession struct {
 func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Values) ([]archiveSession, error) {
 	// Filter conversation IDs, then aggregate all their requests in the window, preserving the conversation title and totals.
 	filters := `conversation_id != '' AND ` + timeFilter + ` AND ` + conversationTraffic
+	unfiltered := filters
 	fields := map[string]string{"model.resolved": "model", "model.requested": "requested_model", "client": "client", "outcome": "outcome", "key.id": "key_id", "tool.name": "tools_called", "request.kind": "request_kind", "thread.source": "thread_source"}
 	for name, field := range fields {
 		if value := q.Get(name); value != "" {
@@ -304,10 +309,7 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 	if q.Get("project.name") != "" {
 		filters += ` AND 0`
 	}
-	if q.Get("q") != "" {
-		w.params.Set("search", q.Get("q"))
-		filters += ` AND request_id IN (SELECT request_id FROM {db:Identifier}.request_facts PREWHERE ` + timeFilter + ` AND ` + conversationTraffic + ` AND ((turn_id='' AND ` + turnStart + `) OR (turn_id!='' AND request_id IN (SELECT argMin(request_id,(started_at,request_id)) FROM {db:Identifier}.request_facts WHERE ` + timeFilter + ` AND ` + conversationTraffic + ` AND turn_id!='' GROUP BY conversation_id,turn_id))) WHERE positionCaseInsensitiveUTF8(last_user_text,{search:String})>0)`
-	}
+
 	source := `FROM {db:Identifier}.request_facts AS f`
 	if q.Get("key.id") != "" {
 		source = factsWithUsage
@@ -316,7 +318,27 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 		filters += ` AND request_id IN (SELECT request_id FROM {db:Identifier}.requests WHERE ` + timeFilter + ` AND requested_model={model_requested:String} LIMIT 1000000)`
 		filters = strings.Replace(filters, ` AND requested_model={model_requested:String}`, "", 1)
 	}
-	sql := `SELECT conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE ` + timeFilter + ` AND ` + conversationTraffic + ` AND conversation_id IN (SELECT conversation_id ` + source + ` WHERE ` + filters + ` GROUP BY conversation_id) GROUP BY conversation_id`
+	if q.Get("q") != "" {
+		w.params.Set("search", q.Get("q"))
+		w.params.Set("search_pattern", "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(q.Get("q")))+"%")
+		ids, err := c.searchSessions(ctx, w, source, filters, pageMatches(w.params))
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			filters += " AND 0"
+		} else {
+			encoded, _ := json.Marshal(ids)
+			w.params.Set("match_ids", string(encoded))
+			filters += " AND conversation_id IN (SELECT arrayJoin(JSONExtract({match_ids:String},'Array(String)')))"
+		}
+	}
+
+	selection := ""
+	if filters != unfiltered {
+		selection = ` AND conversation_id IN (SELECT conversation_id ` + source + ` WHERE ` + filters + ` GROUP BY conversation_id)`
+	}
+	sql := `SELECT conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE conversation_id!='' AND ` + timeFilter + ` AND ` + conversationTraffic + selection + ` GROUP BY conversation_id`
 	present, err := c.externalExists(ctx)
 	if err != nil {
 		return nil, err
@@ -361,16 +383,42 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 		return rows, nil
 	}
 	where := `conversation_id IN (` + strings.Join(ids, ",") + `) AND ` + conversationTraffic
-	w, err = c.narrow(ctx, w, where)
+	lo, hi := w.to, w.from
+	for _, row := range rows {
+		if strings.HasPrefix(row.SessionID, "external:") {
+			continue
+		}
+		if row.FirstAt.Before(lo) {
+			lo = row.FirstAt
+		}
+		if row.LastAt.After(hi) {
+			hi = row.LastAt
+		}
+	}
+	w.params.Set("from", lo.Format("2006-01-02 15:04:05.999999999"))
+	w.params.Set("to", hi.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
+	var summaries []struct {
+		archiveSession
+		TitleRequest string `json:"title_request"`
+	}
+	err = c.query(ctx, `SELECT conversation_id AS session_id,argMin(f.request_id,(started_at,f.request_id)) AS title_request,argMax(key_id,started_at) AS key_id,sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(total_tokens) AS total_tokens `+factsWithUsage+` WHERE `+timeFilter+` AND `+where+` GROUP BY conversation_id LIMIT 1000`, w.params, &summaries)
 	if err != nil {
 		return nil, err
 	}
-	var summaries []archiveSession
-	err = c.query(ctx, `SELECT conversation_id AS session_id,substringUTF8(argMin(`+turnUserText+`,(started_at,f.request_id)),1,200) AS summary,argMax(key_id,started_at) AS key_id,sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,sum(total_tokens) AS total_tokens `+factsWithUsage+` WHERE `+timeFilter+` AND `+where+` GROUP BY conversation_id LIMIT 1000`, w.params, &summaries)
+	titleIDs := []string{}
+	for _, summary := range summaries {
+		titleIDs = append(titleIDs, summary.TitleRequest)
+	}
+	texts, err := c.displayTexts(ctx, w, titleIDs)
+	if err != nil {
+		return nil, err
+	}
 	for i := range rows {
 		for _, summary := range summaries {
 			if rows[i].SessionID == summary.SessionID {
-				rows[i].Summary = summary.Summary
+				text, continued := firstUserText(texts[summary.TitleRequest].Texts)
+				rows[i].Summary = compactSummary(text)
+				rows[i].Continued = continued
 				rows[i].KeyID = summary.KeyID
 				rows[i].InputTokens = summary.InputTokens
 				rows[i].OutputTokens = summary.OutputTokens
@@ -476,4 +524,10 @@ func (c *clickhouseReader) insights(ctx context.Context, w readWindow, q url.Val
 	}
 	out.WindowDays = len(out.Daily)
 	return out, nil
+}
+
+func pageMatches(params url.Values) int {
+	limit, _ := strconv.Atoi(params.Get("limit"))
+	offset, _ := strconv.Atoi(params.Get("offset"))
+	return limit + offset
 }
