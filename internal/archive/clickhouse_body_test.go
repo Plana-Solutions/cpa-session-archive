@@ -148,6 +148,9 @@ func TestClickHouseMixedBodies(t *testing.T) {
 					}
 				}
 				if format == "archive" {
+					if strings.Contains(content, `"original_request":null`) || strings.Contains(content, `"response":null`) {
+						t.Fatal("archive bodies must remain base64 strings")
+					}
 					var record struct {
 						Body []byte `json:"original_request"`
 					}

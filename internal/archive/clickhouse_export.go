@@ -2,6 +2,7 @@ package archive
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"strconv"
@@ -117,7 +118,7 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 				if e != nil {
 					return nil, e
 				}
-				content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "trace_id": r.TraceID, "model": r.Model, "requested_model": r.RequestedModel, "source_format": r.SourceFormat, "outcome": r.Outcome, "status_code": r.StatusCode, "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": r.OriginalRequest, "response": r.Response})
+				content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "trace_id": r.TraceID, "model": r.Model, "requested_model": r.RequestedModel, "source_format": r.SourceFormat, "outcome": r.Outcome, "status_code": r.StatusCode, "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": base64.StdEncoding.EncodeToString(r.OriginalRequest), "response": base64.StdEncoding.EncodeToString(r.Response)})
 			} else {
 				dedup, e := c.hasBodyStorage(ctx)
 				if e != nil {
