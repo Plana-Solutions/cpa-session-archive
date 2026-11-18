@@ -240,6 +240,10 @@ func TestClickHouseRound5(t *testing.T) {
 			if got.(map[string]any)["limit"] != 160 {
 				t.Fatal("native detail page is not bounded")
 			}
+			final := got.(map[string]any)["turn"].(clickhouseTurn)
+			if !final.FinalTruncated || final.FinalRequest != "external:large-native:1" || len([]rune(final.FinalText)) != 12000 {
+				t.Fatal("native final answer lost its full-event target")
+			}
 			records := got.(map[string]any)["records"].([]RequestTimelineView)
 			if len(records) != 2 || !records[1].Entries[0].Truncated || len([]rune(records[1].Entries[0].Text)) > 4000 {
 				t.Fatal("native turn did not return a bounded flagged preview")
@@ -321,6 +325,11 @@ func TestClickHouseRound5(t *testing.T) {
 				t.Fatal("bounded final answer lacks a full-response target")
 			}
 		}
+		raw, err := c.read("requests", url.Values{"id": {"final-source"}})
+		if err != nil || !strings.Contains(string(raw.(Record).Response), "COMPLETE-FINAL-ANSWER") {
+			t.Fatal("final response diagnostics lost the remainder", err)
+		}
+
 	})
 
 }

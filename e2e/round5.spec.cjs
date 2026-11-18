@@ -42,7 +42,7 @@ test('truncated previews offer full diagnostics', async ({ page }) => {
     });
   });
   await expect(page.locator('#subDetail button')).toBeVisible();
-  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request')");
+  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "event.stopPropagation();openRaw('request')");
 });
 
 test('truncated native events offer full stored diagnostics', async ({ page }) => {
@@ -54,7 +54,7 @@ test('truncated native events offer full stored diagnostics', async ({ page }) =
     }, 'external:large-native:1');
   });
   await expect(page.locator('#subDetail button')).toBeVisible();
-  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request',decodeURIComponent('external%3Alarge-native%3A1'))");
+  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "event.stopPropagation();openRaw('request',decodeURIComponent('external%3Alarge-native%3A1'))");
   await expect(page.locator('#subDetail')).toContainText('shell · native-call');
   await expect(page.locator('#subDetail button')).toHaveCount(1);
 });

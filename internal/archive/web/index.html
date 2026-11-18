@@ -2431,7 +2431,7 @@
       function renderTurnSummary(turn, number) {
         return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
           esc(t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
-          renderExpandableTurnText(turn.final_text || t("noFinalAnswer"), !turn.final_text, true) +
+          renderFinalAnswer(turn) +
           '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
           '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
       }
@@ -2490,10 +2490,7 @@
           '</section><section class="turn-final"><h3>' +
           esc(t("assistantRole")) +
           "</h3>" +
-          renderExpandableTurnText(
-            turn.final_text || t("noFinalAnswer"),
-            !turn.final_text, true,
-          ) +
+          renderFinalAnswer(turn) +
           "</section>" + (turn.reasoning ? '<details class="panel"><summary>Reasoning</summary>' + renderMessage("assistant", turn.reasoning) + '</details>' : "");
         document.getElementById("turnProcess").innerHTML = (page.records || [])
           .map(function (view, index) {
@@ -2752,7 +2749,7 @@
           context.push(t("historyItemsFolded", { count: view.history_items }));
         if (view.system_chars)
           context.push(
-            "<button onclick=\"openRaw('instructions')\">" +
+            "<button onclick=\"event.stopPropagation();openRaw('instructions')\">" +
               esc(
                 t("viewSystem") +
                   " · " +
@@ -2824,7 +2821,7 @@
         if (!entry.truncated) return "";
         return '<div class="context-summary">' +
             esc(t("contentTruncated")) +
-            "</div><button onclick=\"openRaw('" + (entry.direction === "input" ? "request" : "response") + "'" + (requestID ? ",decodeURIComponent('" + jsId(requestID) + "')" : "") + ")\">" + esc(t("expandFull")) + "</button>";
+            "</div><button onclick=\"event.stopPropagation();openRaw('" + (entry.direction === "input" ? "request" : "response") + "'" + (requestID ? ",decodeURIComponent('" + jsId(requestID) + "')" : "") + ")\">" + esc(t("expandFull")) + "</button>";
       }
 
       function renderRawLinks() {
@@ -2844,7 +2841,7 @@
               return (
                 '<div class="diagnostic-card"><h3>' +
                 esc(part.label) +
-                "</h3><button onclick=\"openRaw('" +
+                "</h3><button onclick=\"event.stopPropagation();openRaw('" +
                 part.id +
                 "')\">" +
                 esc(t("viewRaw")) +
@@ -3001,6 +2998,12 @@
         fullTexts[id] = text;
         return id;
       }
+      function renderFinalAnswer(turn) {
+        var text = turn.final_text || t("noFinalAnswer");
+        if (!turn.final_truncated) return renderExpandableTurnText(text, !turn.final_text, true);
+        return '<div class="turn-text">' + renderMarkdown(displayText(text).slice(0, 1200)) + '</div>' +
+          renderTruncation({truncated: true, direction: String(turn.final_request || "").startsWith("external:") ? "input" : "output"}, turn.final_request);
+      }
       function renderExpandableTurnText(text, placeholder, markdown) {
         text = displayText(text || "");
         var render = markdown && !placeholder ? renderMarkdown : esc;
@@ -3104,7 +3107,7 @@
                 esc(part.label) +
                 '</h3><p class="muted">' +
                 esc(t("bytes", { count: part.size })) +
-                "</p><button onclick=\"openRaw('" +
+                "</p><button onclick=\"event.stopPropagation();openRaw('" +
                 part.id +
                 "')\">" +
                 esc(t("viewRaw")) +

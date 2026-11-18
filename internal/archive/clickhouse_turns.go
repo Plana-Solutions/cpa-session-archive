@@ -22,6 +22,8 @@ type clickhouseTurn struct {
 	ReasoningTokens int64  `json:"reasoning_tokens"`
 	TotalTokens     int64  `json:"total_tokens"`
 	TitleRequest    string `json:"title_request,omitempty"`
+	FinalRequest    string `json:"final_request,omitempty"`
+	FinalTruncated  bool   `json:"final_truncated,omitempty"`
 	Continued       bool   `json:"continued,omitempty"`
 	Client          string `json:"client"`
 	Kind            string `json:"kind"`
@@ -30,7 +32,7 @@ type clickhouseTurn struct {
 }
 
 const turnColumns = `f.request_id AS turn_id,conversation_id AS session_id,substringUTF8(last_user_text,1,1600) AS user_text,
- substringUTF8(reply_text,1,12000) AS final_text,substringUTF8(reasoning_text,1,12000) AS reasoning,1 AS requests,
+ substringUTF8(reply_text,1,12000) AS final_text,CAST(lengthUTF8(reply_text)>12000,'Bool') AS final_truncated,f.request_id AS final_request,substringUTF8(reasoning_text,1,12000) AS reasoning,1 AS requests,
  started_at AS first_at,addMilliseconds(started_at,duration_ms) AS last_at,key_id,model,outcome,status_code,tools_called AS tool_names,
  duration_ms,input_tokens,output_tokens,reasoning_tokens,total_tokens,client,kind,input_items,length(tools_offered) AS tool_definitions`
 
@@ -57,9 +59,11 @@ const numberedTurns = `WITH steps AS (
 ), grouped AS (
  SELECT *,first_value(if(turn_id!='',turn_id,request_id)) OVER (PARTITION BY turn_no ORDER BY started_at,request_id) AS turn_key FROM numbered WHERE turn_no>0
 ) `
+const finalReply = `argMaxIf((request_id,substringUTF8(reply_text,1,12000),lengthUTF8(reply_text)),(started_at,request_id),reply_text!='' AND NOT ` + groupedSideCall + `)`
 const groupedTurnColumns = `turn_key AS turn_id,any(conversation_id) AS session_id,
  argMin(request_id,(started_at,request_id)) AS title_request,
- substringUTF8(argMaxIf(reply_text,(started_at,request_id),reply_text!='' AND NOT ` + groupedSideCall + `),1,12000) AS final_text,
+ tupleElement(` + finalReply + `,2) AS final_text,
+ tupleElement(` + finalReply + `,1) AS final_request,CAST(tupleElement(` + finalReply + `,3)>12000,'Bool') AS final_truncated,
  count() AS requests,min(started_at) AS first_at,max(addMilliseconds(started_at,f.duration_ms)) AS last_at,
  argMax(key_id,(started_at,request_id)) AS key_id,argMax(f.model,(started_at,request_id)) AS model,
  argMax(f.outcome,(started_at,request_id)) AS outcome,argMax(f.status_code,(started_at,request_id)) AS status_code,
@@ -215,7 +219,8 @@ func (c *clickhouseReader) externalText(ctx context.Context, w readWindow, posit
 }
 
 const externalGroups = `WITH events AS (SELECT *,sum(role='user' OR position=first_position) OVER (ORDER BY position ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS turn_no FROM (
- SELECT ` + externalMetadataColumns + `,substringUTF8(text,1,12000) AS text,min(position) OVER () AS first_position FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}
+ SELECT ` + externalMetadataColumns + `,substringUTF8(full_text,1,12000) AS text,text_chars,min(position) OVER () AS first_position FROM (
+ SELECT ` + externalMetadataColumns + `,text AS full_text,lengthUTF8(text) AS text_chars FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String})
 )), grouped AS (SELECT *,min(position) OVER (PARTITION BY turn_no) AS turn_position FROM events) `
 
 func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q url.Values, endpoint string, limit, offset int) (any, error) {
@@ -267,7 +272,7 @@ func (c *clickhouseReader) externalTurns(ctx context.Context, w readWindow, q ur
 		w.params.Set("limit", strconv.Itoa(limit))
 	}
 	turns := []clickhouseTurn{}
-	err = c.query(ctx, externalGroups+`SELECT toString(turn_position) AS turn_id,concat('external:',any(session_id)) AS session_id,substring(argMin(text,position),1,1600) AS user_text,substring(argMaxIf(text,position,role='assistant' AND text!=''),1,12000) AS final_text,count() AS requests,min(ts) AS first_at,max(ts) AS last_at,'imported' AS outcome,any(source) AS client,groupUniqArrayIf(tool_name,tool_name!='') AS tool_names FROM grouped`+filter+` GROUP BY turn_position`+page, w.params, &turns)
+	err = c.query(ctx, externalGroups+`SELECT toString(turn_position) AS turn_id,concat('external:',any(session_id)) AS session_id,substring(argMin(text,position),1,1600) AS user_text,substringUTF8(argMaxIf(text,position,role='assistant' AND text!=''),1,12000) AS final_text,CAST(argMaxIf(text_chars,position,role='assistant' AND text!='')>12000,'Bool') AS final_truncated,argMaxIf(concat('external:',{session:String},':',toString(position)),position,role='assistant' AND text!='') AS final_request,count() AS requests,min(ts) AS first_at,max(ts) AS last_at,'imported' AS outcome,any(source) AS client,groupUniqArrayIf(tool_name,tool_name!='') AS tool_names FROM grouped`+filter+` GROUP BY turn_position`+page, w.params, &turns)
 	if err != nil {
 		return nil, err
 	}
