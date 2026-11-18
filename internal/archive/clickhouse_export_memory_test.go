@@ -89,7 +89,7 @@ func TestClickHouseExportMemory(t *testing.T) {
 						Queries  uint64 `json:"queries"`
 						Failures uint64 `json:"failures"`
 					}
-					if err := c.query(context.Background(), `SELECT max(memory_usage) AS peak,count() AS queries,countIf(type!='QueryFinish') AS failures FROM system.query_log WHERE user='inference_reader' AND event_time_microseconds>=parseDateTime64BestEffort({since:String}) AND type IN ('QueryFinish','ExceptionWhileProcessing','ExceptionBeforeStart') LIMIT 1`, url.Values{"since": {started}}, &metrics); err != nil {
+					if err := c.query(context.Background(), `SELECT max(memory_usage) AS peak,count() AS queries,countIf(type!='QueryFinish') AS failures FROM system.query_log WHERE user='inference_reader' AND query_start_time_microseconds>=parseDateTime64BestEffort({since:String},9,'UTC') AND NOT has(tables,'system.query_log') AND type IN ('QueryFinish','ExceptionWhileProcessing','ExceptionBeforeStart') LIMIT 1`, url.Values{"since": {started}}, &metrics); err != nil {
 						t.Fatal(err)
 					}
 					var perQuery []struct {
@@ -97,7 +97,7 @@ func TestClickHouseExportMemory(t *testing.T) {
 						Peak uint64 `json:"peak"`
 						N    uint64 `json:"n"`
 					}
-					if err := c.query(context.Background(), `SELECT any(left(query,160)) AS sql,max(memory_usage) AS peak,count() AS n FROM system.query_log WHERE user='inference_reader' AND event_time_microseconds>=parseDateTime64BestEffort({since:String}) AND type IN ('QueryFinish','ExceptionWhileProcessing','ExceptionBeforeStart') GROUP BY normalizedQueryHash(query) ORDER BY peak DESC LIMIT 32`, url.Values{"since": {started}}, &perQuery); err != nil {
+					if err := c.query(context.Background(), `SELECT any(left(query,160)) AS sql,max(memory_usage) AS peak,count() AS n FROM system.query_log WHERE user='inference_reader' AND query_start_time_microseconds>=parseDateTime64BestEffort({since:String},9,'UTC') AND NOT has(tables,'system.query_log') AND type IN ('QueryFinish','ExceptionWhileProcessing','ExceptionBeforeStart') GROUP BY normalizedQueryHash(query) ORDER BY peak DESC LIMIT 32`, url.Values{"since": {started}}, &perQuery); err != nil {
 						t.Fatal(err)
 					}
 					for _, m := range perQuery {
