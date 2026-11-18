@@ -19,7 +19,7 @@ func TestClickHouseBrowserServer(t *testing.T) {
 		t.Skip("browser server opt-in required")
 	}
 	c := localClickHouse(t)
-	c.client.Transport = browserFixtureTransport{t}
+	c.client.Transport = browserFixtureTransport{}
 	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
 		b, err := os.ReadFile("testdata/clickhouse/" + file)
 		if err != nil {
@@ -110,7 +110,7 @@ func TestClickHouseBrowserServer(t *testing.T) {
 }
 
 // This transport only observes the synthetic browser fixture, which has no reader credentials.
-type browserFixtureTransport struct{ t *testing.T }
+type browserFixtureTransport struct{}
 
 func (s browserFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultTransport.RoundTrip(r)
@@ -120,7 +120,7 @@ func (s browserFixtureTransport) RoundTrip(r *http.Request) (*http.Response, err
 		if e != nil {
 			return nil, e
 		}
-		s.t.Logf("ClickHouse fixture failure HTTP %d: %s", resp.StatusCode, body)
+		fmt.Fprintf(os.Stderr, "ClickHouse fixture failure HTTP %d: %s\n", resp.StatusCode, body)
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	return resp, err
