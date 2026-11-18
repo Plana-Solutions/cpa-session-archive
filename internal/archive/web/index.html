@@ -2551,7 +2551,7 @@
       function renderTurnProcessBody(view, complete) {
         if (ExternalArchive.isExternal(view))
           return (view.entries || []).map(function (entry) {
-            return ExternalArchive.renderEntry(entry);
+            return ExternalArchive.renderEntry(entry, view.request_id);
           }).join("");
         var readable = [],
           tools = {},
