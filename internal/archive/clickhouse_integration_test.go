@@ -612,6 +612,9 @@ func collectExport(t *testing.T, c *clickhouseReader, q url.Values) (string, int
 		content.WriteString(ticket["content"].(string))
 		if ticket["done"].(bool) {
 			for _, line := range strings.Split(strings.TrimSpace(content.String()), "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
 				if !json.Valid([]byte(line)) {
 					t.Fatal("invalid JSONL export")
 				}

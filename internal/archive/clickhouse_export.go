@@ -137,6 +137,10 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 			}
 		}
 	}
+	if !endSession && format == "sft" && !strings.HasPrefix(id, "external:") && len(content) == 0 {
+		ticket["next_offset"] = offset + 1
+		return ticket, nil
+	}
 	if endSession {
 		if format == "sft" && strings.HasPrefix(id, "external:") && offset > 0 {
 			ticket["content"] = "]}\n"
@@ -173,8 +177,8 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 // Raw input retains resent history; normalized output also covers SSE responses.
 func (c *clickhouseReader) trainingSnapshot(ctx context.Context, w readWindow, r Record) ([]byte, error) {
 	example, _ := trainingExample(Record{OriginalRequest: r.OriginalRequest})
-	complete, _ := trainingExample(r)
-	if len(complete.Messages) > len(example.Messages) {
+	complete, usable := trainingExample(r)
+	if usable && len(complete.Messages) > len(example.Messages) {
 		return json.Marshal(complete)
 	}
 	filter := ""
@@ -195,5 +199,13 @@ FROM {db:Identifier}.messages WHERE ` + timeFilter + ` AND request_id={id:String
 		return nil, err
 	}
 	example.Messages = append(example.Messages, messages...)
+	user, assistant := false, false
+	for _, message := range example.Messages {
+		user = user || message["role"] == "user"
+		assistant = assistant || message["role"] == "assistant"
+	}
+	if !user || !assistant {
+		return nil, nil
+	}
 	return json.Marshal(example)
 }

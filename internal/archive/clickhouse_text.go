@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The deriver emits separate user messages for injected context and the user's prompt.
@@ -32,7 +33,9 @@ type displayText struct {
 	Texts     []string `json:"texts"`
 }
 
-const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32)) AS texts`
+const userTextItems = `arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32)`
+
+const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),` + userTextItems + `) AS texts`
 
 func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids []string) (map[string]displayText, error) {
 	out := map[string]displayText{}
@@ -125,14 +128,30 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 	for offset := 0; offset < 1000000; offset += 8 {
 		p.Set("text_offset", strconv.Itoa(offset))
 		var rows []struct {
-			ID    string   `json:"id"`
-			Texts []string `json:"texts"`
+			ID         string    `json:"id"`
+			RequestID  string    `json:"request_id"`
+			StartedAt  time.Time `json:"started_at"`
+			Incomplete uint8     `json:"incomplete"`
+			Texts      []string  `json:"texts"`
 		}
-		err := c.query(ctx, `SELECT conversation_id AS id,`+displayTextColumns+` FROM {db:Identifier}.request_facts PREWHERE `+where+` ORDER BY started_at DESC,request_id LIMIT 8 OFFSET {text_offset:UInt32}`, p, &rows)
+		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,arraySum(arrayMap(x->length(x),`+userTextItems+`))>100000 AS incomplete,if(incomplete,[],`+userTextItems+`) AS texts FROM {db:Identifier}.request_facts PREWHERE `+where+` ORDER BY started_at DESC,request_id LIMIT 8 OFFSET {text_offset:UInt32} SETTINGS max_threads=1,max_block_size=8`, p, &rows)
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
+			if row.Incomplete != 0 {
+				full := cloneValues(w.params)
+				full.Set("from", row.StartedAt.Format("2006-01-02 15:04:05.999999999"))
+				full.Set("to", row.StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
+				full.Set("id", row.RequestID)
+				data, err := c.rawBytes(ctx, readWindow{params: full}, "toJSONString("+userTextItems+")", ` FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND request_id={id:String}`)
+				if err != nil {
+					return nil, err
+				}
+				if err = json.Unmarshal(data, &row.Texts); err != nil {
+					return nil, err
+				}
+			}
 			text, _ := firstUserText(row.Texts)
 			if !found[row.ID] && strings.Contains(strings.ToLower(text), strings.ToLower(p.Get("search"))) {
 				found[row.ID] = true

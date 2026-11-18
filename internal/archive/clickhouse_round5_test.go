@@ -160,6 +160,22 @@ func TestClickHouseRound5(t *testing.T) {
 		if strings.TrimSpace(content) != "" {
 			t.Fatalf("unusable training example emitted: %s", content)
 		}
+
+		for _, field := range []string{"msg_direction", "msg_role", "msg_type", "msg_text", "msg_tool_name", "msg_call_id", "msg_arguments"} {
+			extra[field] = []string{""}
+		}
+		extra["msg_direction"] = []string{"input"}
+		extra["msg_role"] = []string{"user"}
+		extra["msg_type"] = []string{"message"}
+		extra["msg_text"] = []string{"question"}
+		extra["msg_position"] = []int{0}
+		extra["msg_is_error"] = []bool{false}
+		extra["msg_text_hash"] = []int{0}
+		seed("user-only-training", "user-only-training", 71, 200, `{"input":[{"role":"user","content":"question"}]}`, `{}`, extra)
+		content, _ = collectExport(t, c, url.Values{"id": {"user-only-training"}, "format": {"sft"}})
+		if strings.TrimSpace(content) != "" {
+			t.Fatalf("training example without assistant emitted: %s", content)
+		}
 	})
 
 }
