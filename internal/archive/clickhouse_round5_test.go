@@ -232,6 +232,48 @@ func TestClickHouseRound5(t *testing.T) {
 				t.Fatal("native final chunk differs")
 			}
 		}
+		t.Run("native turn preview", func(t *testing.T) {
+			got, err := c.read("turns", url.Values{"session_id": {"external:large-native"}, "turn_id": {"0"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			records := got.(map[string]any)["records"].([]RequestTimelineView)
+			if len(records) != 2 || !records[1].Entries[0].Truncated || len([]rune(records[1].Entries[0].Text)) > 4000 {
+				t.Fatal("native turn did not return a bounded flagged preview")
+			}
+		})
+		t.Run("native request preview", func(t *testing.T) {
+			got, err := c.read("request-view", url.Values{"id": {"external:large-native:1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := got.(RequestTimelineView).Entries[0]
+			if !entry.Truncated || len([]rune(entry.Text)) > 4000 {
+				t.Fatal("native request did not return a bounded flagged preview")
+			}
+		})
+		t.Run("native complete diagnostics", func(t *testing.T) {
+			got, err := c.read("requests", url.Values{"id": {"external:large-native:1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored externalMessage
+			json.Unmarshal(got.(Record).OriginalRequest, &stored)
+			if stored.Text != text {
+				t.Fatal("native diagnostics lost full text")
+			}
+		})
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "large-native", "ts": at, "position": 2, "role": "user", "type": "message", "text": text})
+		t.Run("native complete turn text", func(t *testing.T) {
+			got, err := c.read("turn-text", url.Values{"session_id": {"external:large-native"}, "turn_id": {"2"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(map[string]string)["text"] != text {
+				t.Fatal("native user text lost content")
+			}
+		})
+
 	})
 
 }

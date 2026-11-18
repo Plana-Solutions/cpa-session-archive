@@ -44,3 +44,15 @@ test('truncated previews offer full diagnostics', async ({ page }) => {
   await expect(page.locator('#subDetail button')).toBeVisible();
   await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request')");
 });
+
+test('truncated native events offer full stored diagnostics', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    showSubDetail();
+    document.querySelector('#subDetail').innerHTML = ExternalArchive.renderEntry({
+      role: 'assistant', direction: 'input', text: 'short native preview', truncated: true,
+    });
+  });
+  await expect(page.locator('#subDetail button')).toBeVisible();
+  await expect(page.locator('#subDetail button')).toHaveAttribute('onclick', "openRaw('request')");
+});
