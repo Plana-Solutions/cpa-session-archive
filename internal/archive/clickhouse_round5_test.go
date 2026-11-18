@@ -262,7 +262,7 @@ func TestClickHouseSearchRequestBudget(t *testing.T) {
 			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
 		}
 	}
-	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,conversation_id,started_at,ingested_at,msg_direction,msg_role,msg_type,msg_text) SELECT concat('search-',toString(number)),concat('conversation-',toString(number)),now64(9)-INTERVAL 1 HOUR,now64(9),['input'],['user'],['message'],['ordinary short prompt'] FROM numbers(20000)`)
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,conversation_id,started_at,ingested_at,msg_direction,msg_role,msg_type,msg_text) SELECT concat('search-',toString(number)),concat('conversation-',toString(number)),now64(9)-INTERVAL 1 HOUR+toIntervalNanosecond(intDiv(number,10)),now64(9),['input'],['user'],['message'],[if(number=0,'late-only-needle','ordinary short prompt')] FROM numbers(20000)`)
 	budget := &searchRequestBudget{}
 	c.client.Transport = budget
 	got, err := c.read("sessions", url.Values{"q": {"absent-needle"}})
@@ -273,4 +273,15 @@ func TestClickHouseSearchRequestBudget(t *testing.T) {
 		t.Fatal("absent term returned a match")
 	}
 	t.Logf("20000 turn starts, absent result, HTTP requests=%d", budget.n)
+
+	budget.n = 0
+	got, err = c.read("sessions", url.Values{"q": {"late-only-needle"}})
+	if err != nil {
+		t.Fatalf("late match search failed after %d requests: %v", budget.n, err)
+	}
+	matches := got.([]archiveSession)
+	if len(matches) != 1 || matches[0].SessionID != "conversation-0" {
+		t.Fatal("seek pagination missed the final turn start")
+	}
+	t.Logf("20000 turn starts, final-row match, HTTP requests=%d", budget.n)
 }
