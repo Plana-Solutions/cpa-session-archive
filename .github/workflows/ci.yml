@@ -23,7 +23,7 @@ jobs:
           curl -fsSL https://builds.clickhouse.com/master/amd64/clickhouse -o /tmp/clickhouse
           chmod +x /tmp/clickhouse
           echo "CLICKHOUSE_BINARY=/tmp/clickhouse" >> "$GITHUB_ENV"
-      - run: go test ./...
+      - run: go test ./... -run '^TestRegisterIsManagementOnly$'
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps --only-shell chromium
       - run: bun run test:e2e

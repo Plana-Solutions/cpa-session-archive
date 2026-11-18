@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +19,7 @@ func TestClickHouseBrowserServer(t *testing.T) {
 		t.Skip("browser server opt-in required")
 	}
 	c := localClickHouse(t)
+	c.client.Transport = browserFixtureTransport{}
 	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
 		b, err := os.ReadFile("testdata/clickhouse/" + file)
 		if err != nil {
@@ -104,4 +107,20 @@ func TestClickHouseBrowserServer(t *testing.T) {
 	server := &http.Server{Addr: "127.0.0.1:4173", Handler: mux}
 	t.Cleanup(func() { server.Close() })
 	t.Fatal(server.ListenAndServe())
+}
+
+type browserFixtureTransport struct{}
+
+func (browserFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && resp.StatusCode != 200 {
+		body, e := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if e != nil {
+			return nil, e
+		}
+		fmt.Fprintf(os.Stderr, "ClickHouse fixture failure HTTP %d: %s\n", resp.StatusCode, body)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	return resp, err
 }
