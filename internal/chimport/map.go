@@ -30,6 +30,19 @@ func mapRecord(a archive.Record, r *redact.Redactor) (requestRow, usageRow, erro
 	for _, k := range []string{"authorization", "proxy-authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie", "set-cookie"} {
 		delete(h, k)
 	}
+	meta := map[string]string{}
+	for field, name := range map[string]string{"thread.id": "thread_id", "turn.id": "turn_id", "request.kind": "request_kind", "thread.source": "thread_source"} {
+		if value := facet(a, field); value != "" {
+			meta[name] = value
+		}
+	}
+	if len(meta) > 0 && h["x-codex-turn-metadata"] == "" {
+		b, _ := json.Marshal(meta)
+		h["x-codex-turn-metadata"] = string(b)
+	}
+	if value := facet(a, "window.id"); value != "" && h["x-codex-window-id"] == "" {
+		h["x-codex-window-id"] = value
+	}
 	h["x-plana-import"] = "archive-v1"
 	if client := facet(a, "originator"); client != "" {
 		h["originator"] = client
@@ -75,7 +88,7 @@ func mapRecord(a archive.Record, r *redact.Redactor) (requestRow, usageRow, erro
 		u.TotalTokens = u.InputTokens + u.OutputTokens
 	}
 	identity := extract.Conversation(extractRow(row))
-	if (identity == "" || strings.HasPrefix(identity, "fp:")) && a.SessionID != "" && !strings.HasPrefix(a.SessionID, "request:") {
+	if identity == "" && a.SessionID != "" && !strings.HasPrefix(a.SessionID, "request:") {
 		row.RequestHeaders["x-session-id"] = a.SessionID
 	}
 	redactRequest(r, &row)
@@ -100,11 +113,10 @@ func splitStream(s string) []string {
 	if s == "" {
 		return []string{}
 	}
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	if strings.Contains(s, "data:") {
-		return strings.Split(s, "\n\n")
+	if strings.Contains(s, "\r\n\r\n") {
+		return strings.SplitAfter(s, "\r\n\r\n")
 	}
-	return []string{s}
+	return strings.SplitAfter(s, "\n\n")
 }
 func usageFrom(u *usageRow, raw []byte) {
 	apply := func(v gjson.Result) {
@@ -144,6 +156,7 @@ func usageFrom(u *usageRow, raw []byte) {
 }
 
 type externalRow struct {
+	ImportMarker    string `json:"import_marker"`
 	SessionID       string `json:"session_id"`
 	NativeSessionID string `json:"native_session_id"`
 	Source          string `json:"source"`
@@ -179,7 +192,7 @@ func mapExternal(a archive.Record, position uint32, r *redact.Redactor) (externa
 	if ts.IsZero() {
 		return externalRow{}, errors.New("invalid native timestamp")
 	}
-	row := externalRow{SessionID: a.SessionID, NativeSessionID: session.ID, Source: facet(a, "source.tool"), Project: session.ProjectPath, Title: session.Title, TS: stamp(ts), Position: position, Role: e.Role, Type: gjson.GetBytes(e.Data, "type").String(), ToolName: e.Name, Text: text}
+	row := externalRow{ImportMarker: "archive-v1", SessionID: a.SessionID, NativeSessionID: session.ID, Source: facet(a, "source.tool"), Project: session.ProjectPath, Title: session.Title, TS: stamp(ts), Position: position, Role: e.Role, Type: gjson.GetBytes(e.Data, "type").String(), ToolName: e.Name, Text: text}
 	redactExternal(r, &row)
 	return row, nil
 }
@@ -206,5 +219,5 @@ func redactExternal(r *redact.Redactor, row *externalRow) {
 }
 
 func clearExternal(row *externalRow) {
-	*row = externalRow{SessionID: row.SessionID, Position: row.Position, TS: row.TS}
+	*row = externalRow{ImportMarker: "archive-v1", SessionID: row.SessionID, Position: row.Position, TS: row.TS}
 }

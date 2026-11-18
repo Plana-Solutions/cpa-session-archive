@@ -114,7 +114,7 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 			io.WriteString(w, `{"free":100000000000}`)
 			return
 		}
-		if strings.Contains(q, "system.parts") {
+		if strings.Contains(q, "system.parts") || strings.Contains(q, "body_blobs") {
 			return
 		}
 		if strings.HasPrefix(q, "SELECT") {
@@ -132,18 +132,12 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 		if r.Header.Get("Content-Encoding") != "gzip" || r.URL.Query().Get("insert_deduplication_token") == "" {
 			t.Error("insert lacks gzip/dedup")
 		}
-		z, err := gzip.NewReader(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		raw, _ := io.ReadAll(z)
-		z.Close()
+		raw := readInsert(t, r)
 		if strings.Contains(q, "cliproxy.usage") && failUsage {
 			w.WriteHeader(500)
 			return
 		}
-		for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+		for _, line := range raw {
 			var m map[string]any
 			json.Unmarshal(line, &m)
 			id, _ := m["request_id"].(string)

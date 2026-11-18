@@ -1,66 +1,115 @@
-# Import the SQLite archive into ClickHouse
+# Import a settled SQLite archive into ClickHouse
 
-`cmd/cpa-archive-clickhouse-import` imports a bounded snapshot of the archive. It uses the live sink's redactor at `v0.1.0-plana.1`. Build with Go 1.26 or newer and CGO enabled for SQLite.
+Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.4`. Deploy that release's raw schema, deriver, and all dedup readers before importing. This guide does not authorize deployment or a production import.
 
-The SQLite connection uses `mode=ro` and `query_only`. It reads record IDs in batches, closes each cursor, then reconstructs payloads with the archive store. It does not start a long read transaction or change SQLite pragmas that write to the file. Each batch defaults to 16 records. Each batch also caps redacted JSON at 16 MiB. A single oversized record runs alone. Only one importer may use a state file at a time.
+The importer opens SQLite with `mode=ro`, `query_only`, and a one-second busy timeout. It closes each ID cursor before loading payloads. The source may be a `sqlite3 .backup` copy. Use a settled copy for the full import. Keep that file and its path unchanged across resumes. Only one importer may use a checkpoint or target at a time.
 
-Apply the released sink's `schema.sql` to the destination first. The importer creates only `cliproxy.external_messages`. The existing deriver fills `request_facts` and the views from imported requests. Do not run the deriver with `--rebuild` against production during the import.
+## Make the snapshot
 
-## Run the full import
-
-Run on the cluster as root so the redactor can read the existing secret sources. Copy the destination writer password to a root-owned file with mode 0600 before the run. Build the reviewed branch on Linux ARM64 and copy the new importer to `/home/ubuntu/cpa-upgrade/cpa-archive-clickhouse-import` before running it. Do not reuse a binary from the earlier sample. The command below assumes that the password file is `/root/cpa-clickhouse-writer.password`. It is a required operator preparation step, not a file the importer creates.
+Use a separate cluster volume with space for the approximately 12 GB SQLite copy plus at least 8 GiB of headroom. Check `df -h` and the source size first. Do not put the copy on the Mac. The cluster's root disk did not have this much spare capacity during round 3. Prepare a sufficiently large mounted volume before proceeding.
 
 ```sh
-sudo -n env GOMAXPROCS=1 \
+sudo -n mkdir -p /mnt/cpa-import-snapshot
+sudo -n chmod 700 /mnt/cpa-import-snapshot
+sudo -n systemd-run --scope --unit=cpa-archive-backup \
+  -p CPUQuota=50% -p MemoryMax=1G \
+  nice -n 19 ionice -c3 sqlite3 \
+  'file:/var/lib/docker/volumes/cpa-session-archive_archive-data/_data/archive.sqlite?mode=ro' <<'SQL'
+.timeout 5000
+.backup '/mnt/cpa-import-snapshot/archive.sqlite'
+SQL
+sudo -n chmod 400 /mnt/cpa-import-snapshot/archive.sqlite
+sudo -n sqlite3 'file:/mnt/cpa-import-snapshot/archive.sqlite?mode=ro' 'PRAGMA quick_check;'
+sudo -n sha256sum /mnt/cpa-import-snapshot/archive.sqlite
+```
+
+Require `ok` from `quick_check`. Record the digest and highest record ID with the run evidence. The backup API produces a consistent copy while the collector writes. An interrupted backup is not a settled snapshot. Do not substitute a copied main database without its WAL. Retire the old collector before making the final reconciliation snapshot, through a separately approved operation.
+
+## Pass the sample gates
+
+Use a throwaway ClickHouse 25.8 server with hostname `cpa-archive-import-sample`, an isolated Docker network, and a loopback HTTP endpoint. Cap both the container and server at 1.5 GB. Never run either verification command against production. Both reject other hostnames and non-loopback URLs.
+
+1. Import `--newest 2000 --external-sessions 50` with a dedicated checkpoint. Rehearse the released deriver in loop mode alongside the importer for at least 30 minutes. Pause only that deriver for ten minutes, resume it, and observe its backlog drain. Retain the peak query memory, container memory, lag samples, exceptions, and process exit codes.
+2. Run the same importer with `--verify-sample`, the same `--sqlite` and `--state`, and the existing redaction sources. Redirect stdout to a private `expected.jsonl`. This reads and redacts each archived request again, reconstructs its stored body with `bodystore.Reader`, checks byte equality and every digest, and emits only IDs, digests, and expected identities from the released extractor.
+3. As `inference_reader`, read production `request_facts` for the bounded sample request IDs and `started_at >= '2026-11-18 14:27:00'`. Save only `request_id`, `conversation_id`, and `client` as private JSONL. Supply its path as `LIVE_FACTS` and set `REQUIRE_LIVE_OVERLAP=1` for the newest sample. The reader password stays in its existing secret file and HTTP authentication headers, never SQL or logs.
+4. Set `EXPECTED_FILE`, `LIVE_FACTS`, `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD_FILE`, `ARCHIVE_SQLITE`, `IMPORT_STATE`, `CPA_CONFIG`, `CPA_AUTH_DIR`, and `EXTERNAL_SESSIONS=50`. Run `python3 scripts/verify_clickhouse_import.py`. Require zero live identity mismatches, zero extractor mismatches, zero leaking rows, complete derivation, and a one-to-one identity mapping. The gate compares complete identities, including protocol prefixes and agent suffixes.
+5. Repeat on an oldest slice with explicit `--first-id 1 --upper-id 500 --external-sessions -1`, a separate checkpoint, and `EXTERNAL_SESSIONS=0`. The oldest slice predates live capture, so omit `LIVE_FACTS` and `REQUIRE_LIVE_OVERLAP`. Require equality against the released live extractor. Measure sizes separately after normal merges. Require at most 15 KiB per eligible proxy row across request, blob, usage, and fact tables. Scale native events separately.
+
+A mismatch is a failed gate. Archived Claude records may lack agent headers that live capture retained. Do not invent those headers or count archive grouping as proof of live identity. The operator must resolve that data loss before production acceptance.
+
+Delete fetched traffic, snapshot samples, credentials copied for the test, and disposable ClickHouse volumes after retaining sanitized aggregate evidence. A recent sample does not establish the distribution of older payloads.
+
+## Run the production import
+
+Only proceed after the sample gates and an independent review pass. Verify production redaction sources, the released deriver and reader versions, and `non_replicated_deduplication_window=1000` on requests, usage, and body_blobs. Confirm at least 8 GiB unreserved ClickHouse space plus the measured final-size and merge budget. Keep request and blob merge sizes bounded to approximately 2 GiB through a separately reviewed production setting. Do not change a stack as part of running this command.
+
+Build the reviewed commit on Linux ARM64. Install its binary at `/home/ubuntu/cpa-upgrade/cpa-archive-clickhouse-import`. Prepare `/root/cpa-clickhouse-writer.password` with mode 0600 through the existing secret mechanism. Never put the password in a command argument. In a root-capable Bash session, run the following command. `pipefail` preserves importer failures through `tee`.
+
+```sh
+set -o pipefail
+sudo -n systemd-run --scope --unit=cpa-archive-clickhouse-import \
+  -p CPUQuota=50% -p MemoryMax=1G \
+  env GOMAXPROCS=1 \
   CLICKHOUSE_URL=http://100.127.160.51:8123 \
   CLICKHOUSE_USER=cliproxy \
   CLICKHOUSE_PASSWORD_FILE=/root/cpa-clickhouse-writer.password \
   nice -n 19 ionice -c3 /home/ubuntu/cpa-upgrade/cpa-archive-clickhouse-import \
-  --sqlite /var/lib/docker/volumes/cpa-session-archive_archive-data/_data/archive.sqlite \
+  --sqlite /mnt/cpa-import-snapshot/archive.sqlite \
   --state /root/cpa-archive-clickhouse-import.json \
   --config /data/compose/3/config.yaml \
   --auth-dir /var/lib/docker/volumes/cli-proxy-api_cpa-auth/_data \
-  --batch-size 16 \
-  --batch-bytes 16777216 \
-  --rate-limit 2 \
-  --min-free-bytes 6442450944 \
-  --disk-check-batches 100 \
-  --newest 0 \
-  --external-sessions 0
+  --batch-size 16 --batch-bytes 16777216 --rate-limit 2 \
+  --min-free-bytes 8589934592 --disk-check-batches 20 \
+  --max-quarantined 1 --newest 0 --external-sessions 0 \
+  2>&1 | sudo -n tee -a /root/cpa-archive-clickhouse-import.log
 ```
 
-This command writes production data. The implementation run used only an isolated throwaway destination. The root operator runs the full import after review.
+The scope has no restart policy. Interrupt with Ctrl-C or send SIGINT or SIGTERM to the importer. From another shell, `sudo -n systemctl kill --signal=SIGINT --kill-whom=all cpa-archive-clickhouse-import.scope` stops the scope. A forced kill may leave the current batch partly inserted. Resume with the exact command and checkpoint after investigating the stop. Successful existence checks repair a missing usage row without reinserting its request.
 
-Interrupt with SIGINT or SIGTERM. Rerun the exact command to resume. A checkpoint advances only after both request and usage inserts succeed. If the server accepted a request but its usage insert failed, the next run recognizes the import marker and repairs usage. Existing live request IDs skip both archive rows and synthesized usage. Inserts use gzip JSONEachRow and a content-derived deduplication token. Native events use stable positions in archive record ID order and a ReplacingMergeTree; readers must use `FINAL`.
+Watch CPA latency, sink retry and drop logs, live `max(ingested_at)`, and deriver lag throughout the run. Abort on any quarantine, unreserved space below 8 GiB, more than 300 active parts in any partition, ClickHouse exceptions 241 or 252, container memory above approximately 1.3 GB, lag above 300 or rising for three checks, stalled live capture, or CPA degradation. The importer enforces disk and parts limits at startup and every 20 completed batches. The remaining signals require operator monitoring. The intentional rehearsal pause is exempt from the lag abort threshold only in the throwaway server.
 
-The checkpoint binds the SQLite path, destination, user, and sample limits. It captures the highest record ID when created. New proxy records after that boundary require a new state file for a reconciliation pass. Keep the original state file for evidence. A new state file can safely rescan existing rows. Native sessions are static for this one-time migration; append-only native history can also be reconciled with a new state file. Do not run two importers concurrently. The existence check cannot prevent a simultaneous live insert of the same request ID after the check, so retire the archive collector or import a settled snapshot before final reconciliation.
+## Resume and retry quarantined records
 
-`--rate-limit` caps processed proxy records per second, including existing-row skips. Zero disables the cap. Native events are not throttled by this flag. Each batch waits for its own rate budget after processing, so slow batches cannot accumulate credit for later bursts. Progress reports separate existing-row and no-model skips, quarantine counts, throughput, and inserted JSON MB/s. Model-less records are excluded by the ID query and counted once over the snapshot range.
+The checkpoint advances after blobs, skeleton requests, and usage succeed. Blobs commit before their references. A failed batch does not advance its ID boundary. Existing live request IDs skip both archive request and synthesized usage. Existing imported rows with missing usage repair usage. Content-derived dedup tokens protect retried batches. Concurrent live writes can still race the existence check, so finish with a settled snapshot and one importer.
 
-The importer checks `system.disks` free space at startup and every `--disk-check-batches` batches, default 100. It prints active `system.parts` counts and disk bytes at the same interval. It stops below `--min-free-bytes`, default 6 GiB. Rerun the same command after restoring disk headroom. The checkpoint retains the last fully inserted batch. The writer must have SELECT access to these system tables. Watch live CPA latency while the import runs.
+SQLite BUSY and LOCKED, ClickHouse transport errors, and HTTP 5xx receive four attempts with bounded backoff. Other SQLite errors stop immediately. Only missing rows, invalid timestamps, malformed JSON, corrupt gzip, and explicit payload-integrity limits enter durable quarantine. HTTP 4xx inserts split until a single rejected archive ID can be quarantined. Logs include the numeric ID and ClickHouse exception-code header, with server details suppressed. Reaching `--max-quarantined` aborts immediately. Any remaining quarantine causes a nonzero exit, including a resumed run that skips those IDs.
 
-SQLite BUSY and LOCKED failures, ClickHouse transport failures, and HTTP 5xx receive up to four attempts with 250 ms, 500 ms, and 1 s backoffs. Exhausted transient failures stop without advancing that batch's checkpoint. Corrupt payloads, missing CAS blobs, invalid timestamps, and invalid native events instead append numeric archive IDs and fixed, secret-free reasons to `Quarantine` in the checkpoint. The run continues. Quarantined rows require operator repair and a fresh reconciliation state to retry. Native checkpoints retain the last record ID and next position within the current session. Failed inserts never move that position.
+After a verified repair, repeat the original command with `--retry-quarantined`. It selects only the quarantined record IDs, preserves native positions, and clears each ID only after successful writes. Do not edit the checkpoint to hide failures. A transport failure during retry keeps the quarantine entry. This round changes checkpoint identity parameters; use fresh round-3 states rather than round-2 sample checkpoints.
 
-## Data retained and missing
+The default batch is 16 records and 16 MiB of encoded rows plus item bytes. One larger record runs alone. JSON usage and native rows use an encoder without HTML escaping and stream into gzip without a second plain batch buffer. Requests and blobs use binary-safe RowBinary, including raw hashes. A blob's declared `raw_size` is checked before reading its data. Gzip checksums and lengths must validate. Requests and responses are capped at 64 MiB, with a cumulative expansion budget for referenced blobs. `--rate-limit` counts inserted proxy records, including usage repairs, and excludes skips. Native events are uncapped. Progress separates inserted rows, existing skips, model-less skips, and quarantine.
 
-Requests keep the archive UUID, trace ID, UTC timestamps, original client payload, final response or stored stream, model, outcome, and status. Available `header.*` facets become request headers, with credential headers removed. Each row gets `x-plana-import=archive-v1`. Archived session and agent headers stay intact. The released sink's `extract.Conversation` reads the mapped row. Only an empty or inferred `fp:` identity can receive `x-session-id` as a fallback, and only when the archive session is not `request:*`. This preserves Claude subagent parents, Codex thread prefixes, and count_tokens session headers. Only the `originator` facet supplies `originator`; archived User-Agent supplies `user-agent`. The sink derives client names using the same rules as live capture. Truncated archive payloads carry `x-plana-archive-truncated=true` because the raw sink schema has no truncation column. Original bodies are preserved apart from redaction.
+## Retained data and limits
 
-The archive stores only final lifecycle records. It discarded per-attempt usage, selection IDs, upstream retries, timing to first token, response headers, and most usage metadata. The importer synthesizes one usage row per imported lifecycle request, with ID `archive-v1:<request_id>`. It extracts retained response usage from OpenAI, Responses, Claude, and Gemini payloads and stream events, plus a retained metadata `usage` object. It uses the largest observed cumulative value for each token field. Missing counters remain zero. When total tokens are absent, it adds input and output tokens. These totals are a lower bound when a response was truncated, usage was omitted, or retries consumed tokens. Cached tokens and reasoning tokens are subsets and are not added again. Only a 32-byte key hash supplies the first 16 hex characters expected by the live sink. The retained `key_hash` metadata wins. A hexadecimal KeyID matching `caller_scope` or `caller.scope` is never a key hash. Non-hash legacy key identities remain empty. The archive did not retain the usage `generate` flag. The importer infers false for count_tokens and embeddings paths, and true for generation calls.
+The importer redacts complete rows with the released `redact` package and production YAML and auth sources before splitting or buffering them. `bodystore.Split`, `Lineage`, `EncodeSkeleton`, and `EncodeBlob` use the live format. Missing lineage falls back to `archive:` plus the archive session ID. Only committed hashes are preloaded, bounded to the current batch's lineages and references. Failed blob writes prevent corresponding skeletons. Responses stay inline. Reconstructed bytes equal the redacted, expanded archived body. CAS expansion had already reserialized some original client JSON, so this is not proof of equality with original client wire bytes.
 
-Native events keep the exact archive external session ID in `session_id`, the native ID, source tool, project path, title, timestamp, role, event type where present, tool name, and text. Events with no text fall back to the retained event JSON data, as the archive timeline does. The UI adds another `external:` routing prefix and removes it on lookup. The stored ID remains unchanged to satisfy the shared contract.
+Available archived headers remain intact, with credential headers removed. Codex turn and window headers are rebuilt from retained thread, turn, request-kind, thread-source, and window facets. The importer preserves live fingerprint identities. Only an empty identity can use a generic archive session fallback. Client names come from the released extractor. Truncation has its own header. All requests carry `x-plana-import=archive-v1`.
 
-Every body, header value, and error uses the released redactor. Native text and descriptive fields use it too. Request redaction failures empty bodies, headers, and errors and set `redaction_count=-1`, matching the live plugin. Native failures empty descriptive fields. Unreadable sources or malformed YAML or auth JSON stop the run before inserting rows. Only credentials still present in these sources and pattern-detectable secrets can be recognized; deleted historical credentials cannot be recovered by this importer.
+Usage rows have `request_id=archive-v1:<id>` and `source=archive-v1`. They recover retained cumulative token counters. Missing counters remain zero. Per-attempt retries, TTFT, selection IDs, response headers, and discarded metadata cannot be restored. A caller-scope hash is not treated as an API-key hash. Native messages retain stable archive session IDs and positions and carry `import_marker=archive-v1`. Readers of the native ReplacingMergeTree use `FINAL`.
 
-## Verify a sample
+Redaction failure empties sensitive fields, matching the sink. The importer cannot recognize deleted historical credentials from current source files alone. Verification scans current known secrets and their encoded variants, in addition to the released pattern redactor.
 
-Use an isolated ClickHouse 25.8 container on the cluster. Bind HTTP to a loopback port and put the container on its own Docker network. Apply the released raw schema, then run the importer with `--newest 2000 --external-sessions 50` and a separate state file. Use the released `clickhouse-deriver-linux-arm64` from `v0.1.0-plana.1` with the same redaction sources. A rebuild is safe only on this throwaway database.
+## Roll back only imported rows
 
-Run `scripts/verify_clickhouse_import.py` as root with Python 3 and PyYAML installed. Set `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD_FILE`, `ARCHIVE_SQLITE`, and `IMPORT_STATE` to the sample files. Set `EXTERNAL_SESSIONS=50` to match this sample. The container hostname must be `cpa-archive-import-sample`. The script refuses non-loopback URLs and rejects any server with another hostname, including production reached through a loopback tunnel. It requires a bounded sample of at most 10,000 eligible proxy records.
+Stop the importer and temporarily stop the deriver loop through the normal operator procedure. Wait for its in-flight pass to finish. Keep live capture running. Use the existing writer credentials through HTTP authentication or its mounted secret file. Freeze imported IDs before deleting their marker rows.
 
-The script reads configuration and auth secrets from their existing files. It scans explicit columns for only the sample request IDs and native session IDs, in pages of 16 IDs. It never selects whole tables. It prints counts and sizes only. It strips `claude:`, `codex:`, and generic `session:` prefixes and compares per-request identity sets in both directions for archive sessions with at least one retained client body. A split, merge, or equal-count substitution fails. A `request:*` archive session on count_tokens resolves to its retained Claude session header. Bodyless rejected requests remain metadata-only and do not require a deriver change. The gate also fails on current credential leaks, missing derived requests, model-less rows, or native count differences.
+```sql
+CREATE TABLE cliproxy.archive_v1_rollback_ids
+ENGINE=MergeTree ORDER BY request_id AS
+SELECT DISTINCT request_id FROM cliproxy.requests
+WHERE request_headers['x-plana-import']='archive-v1';
 
-For the final size estimate, use active `system.parts.data_compressed_bytes` after merges. Scale request, usage, and derived bytes by the full proxy population and native bytes by the native event population. Include `bytes_on_disk` and room for merges when checking the disk budget. A recent-only sample cannot establish the payload-size distribution of older history.
+DELETE FROM cliproxy.request_facts
+WHERE request_id IN (SELECT request_id FROM cliproxy.archive_v1_rollback_ids)
+SETTINGS lightweight_deletes_sync=2;
+DELETE FROM cliproxy.usage
+WHERE source='archive-v1' AND startsWith(request_id,'archive-v1:')
+SETTINGS lightweight_deletes_sync=2;
+DELETE FROM cliproxy.requests
+WHERE request_headers['x-plana-import']='archive-v1'
+SETTINGS lightweight_deletes_sync=2;
+DELETE FROM cliproxy.external_messages
+WHERE import_marker='archive-v1'
+SETTINGS lightweight_deletes_sync=2;
+```
 
-## Build scope
-
-The released sink and its nested deriver module require Go 1.26. This importer pins both to the same release commit. The module and existing CI, release, and Docker build versions therefore use Go 1.26, with no additional toolchain upgrade in this fix round. The shared-module change also rebuilds the archive `.so`, collector, and existing native importer with Go 1.26. Their source behavior is unchanged. No new artifacts were installed in production.
+Verify that marker rows and their facts are absent, then restart the normal deriver loop. Never use `deriver --rebuild`, truncate a shared table, or drop a monthly partition. Retain the rollback ID table until verification is complete. Blob keys can be shared with live requests. Leave blobs in place during rollback. Remove only confirmed unreferenced blobs later under the sink's retention rules. Lightweight deletes reclaim storage on later merges and need temporary disk headroom.

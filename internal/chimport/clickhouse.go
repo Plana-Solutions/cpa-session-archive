@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,16 +35,14 @@ func (c *client) call(ctx context.Context, q string, params url.Values, body io.
 		v[k] = vs
 	}
 	u.RawQuery = v.Encode()
-	var payload []byte
-	if body != nil {
-		payload, err = io.ReadAll(body)
-		if err != nil {
-			return nil, err
-		}
-	}
 	var result []byte
 	err = retry(ctx, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload))
+		if seek, ok := body.(io.Seeker); ok {
+			if _, err := seek.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
 		if err != nil {
 			return fmt.Errorf("invalid ClickHouse request")
 		}
@@ -61,40 +60,94 @@ func (c *client) call(ctx context.Context, q string, params url.Values, body io.
 			return transientError{"ClickHouse read failed"}
 		}
 		if resp.StatusCode >= 500 {
-			return transientError{fmt.Sprintf("ClickHouse HTTP %d (details suppressed)", resp.StatusCode)}
+			return transientError{fmt.Sprintf("ClickHouse HTTP %d exception_code=%q (details suppressed)", resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code"))}
 		}
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("ClickHouse HTTP %d (details suppressed)", resp.StatusCode)
+			return httpError{resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code")}
 		}
 		result = b
 		return nil
 	})
 	return result, err
 }
-func (c *client) insert(ctx context.Context, table string, rows []json.RawMessage) (int64, error) {
+
+type httpError struct {
+	status int
+	code   string
+}
+
+func (e httpError) Error() string {
+	return fmt.Sprintf("ClickHouse HTTP %d exception_code=%q (details suppressed)", e.status, e.code)
+}
+func badInsert(err error) bool {
+	var e httpError
+	return errors.As(err, &e) && e.status >= 400 && e.status < 500
+}
+
+func encodeJSON(v any) ([]byte, error) {
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	err := e.Encode(v)
+	return b.Bytes(), err
+}
+
+func (c *client) insert(ctx context.Context, table string, rows [][]byte) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	var plain bytes.Buffer
-	for _, item := range rows {
-		plain.Write(item)
-		plain.WriteByte('\n')
-	}
-	sum := sha256.Sum256(plain.Bytes())
 	var buf bytes.Buffer
 	z := gzip.NewWriter(&buf)
-	if _, err := z.Write(plain.Bytes()); err != nil {
-		return 0, err
+	sum := sha256.New()
+	dst := io.MultiWriter(z, sum)
+	var size int64
+	for _, row := range rows {
+		n, err := dst.Write(row)
+		if err != nil {
+			return 0, err
+		}
+		size += int64(n)
 	}
 	if err := z.Close(); err != nil {
 		return 0, err
 	}
-	_, err := c.call(ctx, "INSERT INTO cliproxy."+table+" FORMAT JSONEachRow", url.Values{"insert_deduplication_token": {"archive-v1-" + table + "-" + hex.EncodeToString(sum[:])}, "insert_deduplicate": {"1"}}, &buf, true)
-	return int64(plain.Len()), err
+	query := "INSERT INTO cliproxy." + table + " FORMAT JSONEachRow"
+	if table == "requests" {
+		query = "INSERT INTO cliproxy.requests (" + bodyRequestColumns + ") FORMAT RowBinary"
+	}
+	if table == "body_blobs" {
+		query = "INSERT INTO cliproxy.body_blobs (lineage,hash,data,first_seen) FORMAT RowBinary"
+	}
+	_, err := c.call(ctx, query, url.Values{"insert_deduplication_token": {"archive-v2-" + table + "-" + hex.EncodeToString(sum.Sum(nil))}, "insert_deduplicate": {"1"}}, bytes.NewReader(buf.Bytes()), true)
+	return size, err
+}
+
+// A rejected single row is durable quarantine; transport and server failures stop the batch.
+func (c *client) insertSplit(ctx context.Context, table string, rows [][]byte, ids []int64, quarantine func(int64, string) error) (int, int64, error) {
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+	b, err := c.insert(ctx, table, rows)
+	if err == nil {
+		return len(rows), b, nil
+	}
+	if !badInsert(err) {
+		return 0, 0, err
+	}
+	if len(rows) == 1 {
+		return 0, 0, quarantine(ids[0], err.Error())
+	}
+	mid := len(rows) / 2
+	n, b, err := c.insertSplit(ctx, table, rows[:mid], ids[:mid], quarantine)
+	if err != nil {
+		return n, b, err
+	}
+	n2, b2, err := c.insertSplit(ctx, table, rows[mid:], ids[mid:], quarantine)
+	return n + n2, b + b2, err
 }
 
 func (c *client) diskStatus(ctx context.Context, minFree uint64, log io.Writer) error {
-	b, err := c.call(ctx, "SELECT min(free_space) AS free FROM system.disks FORMAT JSONEachRow", nil, nil, false)
+	b, err := c.call(ctx, "SELECT min(unreserved_space) AS free FROM system.disks FORMAT JSONEachRow", nil, nil, false)
 	if err != nil {
 		return err
 	}
@@ -104,12 +157,28 @@ func (c *client) diskStatus(ctx context.Context, minFree uint64, log io.Writer) 
 	if err = json.Unmarshal(bytes.TrimSpace(b), &disk); err != nil {
 		return err
 	}
-	b, err = c.call(ctx, "SELECT table,count() AS parts,sum(bytes_on_disk) AS disk_bytes FROM system.parts WHERE active AND database='cliproxy' GROUP BY table ORDER BY table FORMAT JSONEachRow", nil, nil, false)
+	b, err = c.call(ctx, "SELECT table,partition,count() AS parts,sum(bytes_on_disk) AS disk_bytes FROM system.parts WHERE active AND database='cliproxy' GROUP BY table,partition ORDER BY table,partition FORMAT JSONEachRow", nil, nil, false)
 	if err != nil {
 		return err
 	}
 	if log != nil {
 		fmt.Fprintf(log, "disk_free_bytes=%d active_parts=%s\n", disk.Free, bytes.TrimSpace(b))
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	for {
+		var part struct {
+			Parts uint64 `json:"parts"`
+		}
+		err := dec.Decode(&part)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if part.Parts > 300 {
+			return fmt.Errorf("parts guard stopped import: partition has %d parts", part.Parts)
+		}
 	}
 	if disk.Free < minFree {
 		return fmt.Errorf("disk guard stopped import: free bytes %d below threshold %d", disk.Free, minFree)
@@ -124,12 +193,17 @@ func idsParam(ids []string) string {
 	}
 	return "[" + strings.Join(out, ",") + "]"
 }
-func (c *client) existing(ctx context.Context, table string, ids []string) (map[string]bool, error) {
-	params := url.Values{"param_ids": {idsParam(ids)}}
+func (c *client) existing(ctx context.Context, table string, ids []string, lo, hi string) (map[string]bool, error) {
+	params := url.Values{"param_ids": {idsParam(ids)}, "param_lo": {lo}, "param_hi": {hi}}
 	q := "SELECT request_id FROM cliproxy." + table + " WHERE request_id IN {ids:Array(String)} FORMAT JSONEachRow"
 	if table == "requests" {
-		q = "SELECT request_id, request_headers['x-plana-import']='archive-v1' AS imported FROM cliproxy.requests WHERE request_id IN {ids:Array(String)} FORMAT JSONEachRow"
+		q = "SELECT request_id, min(request_headers['x-plana-import']='archive-v1') AS imported FROM cliproxy.requests WHERE request_id IN {ids:Array(String)} GROUP BY request_id FORMAT JSONEachRow"
 	}
+	field := "requested_at"
+	if table == "requests" {
+		field = "started_at"
+	}
+	q = strings.Replace(q, " WHERE ", " WHERE "+field+">={lo:DateTime64(9,'UTC')} AND "+field+"<={hi:DateTime64(9,'UTC')} AND ", 1)
 	b, err := c.call(ctx, q, params, nil, false)
 	if err != nil {
 		return nil, err
@@ -157,7 +231,7 @@ func newClient(endpoint, user, password string) *client {
 }
 
 const externalDDL = `CREATE TABLE IF NOT EXISTS cliproxy.external_messages (
- session_id String,native_session_id String,source LowCardinality(String),project String,title String,
+ import_marker LowCardinality(String) DEFAULT 'archive-v1',session_id String,native_session_id String,source LowCardinality(String),project String,title String,
  ts DateTime64(9,'UTC'),position UInt32,role LowCardinality(String),type LowCardinality(String),
  tool_name LowCardinality(String),text String CODEC(ZSTD(3)),ingested_at DateTime64(9,'UTC') DEFAULT now64(9)
 ) ENGINE=ReplacingMergeTree(ingested_at) ORDER BY (session_id,position)`

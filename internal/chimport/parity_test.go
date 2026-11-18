@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,7 +32,7 @@ func TestLiveExtractionParity(t *testing.T) {
 		{"subagent", "claude", "/v1/messages", `{"messages":[]}`, "s1", "claude:s1:agent:a7", "claude-code", "claude:s1", map[string][]string{"header.x-claude-code-session-id": {"s1"}, "header.x-claude-code-agent-id": {"a7"}}},
 		{"codex", "openai-response", "/v1/responses", `{"client_metadata":{"thread_id":"t1"},"input":"hi"}`, "t1", "codex:t1", "codex", "", map[string][]string{"originator": {"codex"}}},
 		{"count_tokens", "claude", "/v1/messages/count_tokens", `{"messages":[]}`, "request:req1", "claude:s1", "claude-code", "", map[string][]string{"header.x-claude-code-session-id": {"s1"}}},
-		{"chat", "openai", "/v1/chat/completions", `{"messages":[{"role":"user","content":"hi"}]}`, "chat1", "session:chat1", "OpenAI", "", map[string][]string{"client": {"OpenAI/JS 5.20.1"}, "client.user_agent": {"OpenAI/JS 5.20.1"}}},
+		{"chat", "openai", "/v1/chat/completions", `{"messages":[{"role":"user","content":"hi"}]}`, "chat1", "fp:5748322fd07ae370", "OpenAI", "", map[string][]string{"client": {"OpenAI/JS 5.20.1"}, "client.user_agent": {"OpenAI/JS 5.20.1"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := fixture(t)
@@ -156,7 +158,7 @@ func runFixture(t *testing.T, pace bool) {
 		case strings.Contains(q, "system.disks"):
 			io.WriteString(w, `{"free":100000000000}`)
 			return
-		case strings.Contains(q, "system.parts"), strings.HasPrefix(q, "CREATE"):
+		case strings.Contains(q, "body_blobs"), strings.Contains(q, "system.parts"), strings.HasPrefix(q, "CREATE"), strings.HasPrefix(q, "ALTER"):
 			return
 		case strings.HasPrefix(q, "SELECT"):
 			if strings.Contains(q, "cliproxy.requests") {
@@ -175,7 +177,7 @@ func runFixture(t *testing.T, pace bool) {
 			var row externalRow
 			json.Unmarshal(raw[0], &row)
 			if row.Position == 1 && failNative {
-				w.WriteHeader(400)
+				w.WriteHeader(500)
 				return
 			}
 			for _, b := range raw {
@@ -215,10 +217,10 @@ func runFixture(t *testing.T, pace bool) {
 	start := time.Now()
 	err = Run(context.Background(), o)
 	if pace {
-		if err != nil {
-			t.Fatal(err)
+		if err == nil || !strings.Contains(err.Error(), "quarantined") {
+			t.Fatal("expected nonzero quarantine exit", err)
 		}
-		if time.Since(start) < 150*time.Millisecond {
+		if time.Since(start) < 90*time.Millisecond {
 			t.Fatal("rate cap did not throttle")
 		}
 	} else {
@@ -236,10 +238,10 @@ func runFixture(t *testing.T, pace bool) {
 		o.Rate = 0.01
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		if err = Run(ctx, o); err != nil {
+		if err = Run(ctx, o); err == nil || !strings.Contains(err.Error(), "quarantined") {
 			t.Fatal(err)
 		}
-		if err = Run(ctx, o); err != nil {
+		if err = Run(ctx, o); err == nil || !strings.Contains(err.Error(), "quarantined") {
 			t.Fatal(err)
 		}
 		if positions[0] != 1 || positions[1] != 1 {
@@ -252,6 +254,25 @@ func runFixture(t *testing.T, pace bool) {
 	if err != nil || state.NoModelSkipped != 1 || len(state.Quarantine) != 1 || insertCalls != 2 || len(requests) != 2 || state.LastID != state.UpperID {
 		t.Fatal("quarantine/skip/batch mismatch", err, state, insertCalls, len(requests))
 	}
+	fix, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fix.Exec("UPDATE records SET started_at=? WHERE request_id='bad'", a.StartedAt.Format(time.RFC3339Nano))
+	fix.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.RetryQuarantined = true
+	o.Rate = 0
+	if err = Run(context.Background(), o); err != nil {
+		t.Fatal("retry quarantined", err)
+	}
+	state, err = loadState(o, ro.DB)
+	if err != nil || len(state.Quarantine) != 0 || len(requests) != 3 {
+		t.Fatal("retry did not repair only failed row", err, len(requests), state.Quarantine)
+	}
+
 }
 
 func readInsert(t *testing.T, r *http.Request) []json.RawMessage {
@@ -265,6 +286,9 @@ func readInsert(t *testing.T, r *http.Request) []json.RawMessage {
 	raw, err := io.ReadAll(z)
 	if err != nil {
 		t.Error(err)
+	}
+	if strings.Contains(r.URL.Query().Get("query"), "FORMAT RowBinary") {
+		return decodeRequests(t, raw)
 	}
 	var out []json.RawMessage
 	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
@@ -289,4 +313,70 @@ func TestDiskGuard(t *testing.T) {
 	if calls != 2 || !strings.Contains(log.String(), "disk_free_bytes=100") {
 		t.Fatal("missing disk/parts observation")
 	}
+}
+
+func decodeRequests(t *testing.T, raw []byte) []json.RawMessage {
+	t.Helper()
+	rd := bytes.NewReader(raw)
+	n := func() int {
+		v, e := binary.ReadUvarint(rd)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return int(v)
+	}
+	str := func() string {
+		b := make([]byte, n())
+		if _, e := io.ReadFull(rd, b); e != nil {
+			t.Fatal(e)
+		}
+		return string(b)
+	}
+	strs := func() []string {
+		out := []string{}
+		for i := n(); i > 0; i-- {
+			out = append(out, str())
+		}
+		return out
+	}
+	dict := func() map[string]string {
+		out := map[string]string{}
+		for i := n(); i > 0; i-- {
+			k := str()
+			out[k] = str()
+		}
+		return out
+	}
+	skip := func(n int) {
+		if _, e := rd.Seek(int64(n), io.SeekCurrent); e != nil {
+			t.Fatal(e)
+		}
+	}
+	out := []json.RawMessage{}
+	for rd.Len() > 0 {
+		row := requestRow{RequestID: str(), TraceID: str()}
+		skip(16)
+		row.Path = str()
+		row.SourceFormat = str()
+		row.Model = str()
+		row.RequestedModel = str()
+		skip(1)
+		row.Outcome = str()
+		skip(2)
+		row.Error = str()
+		row.RequestHeaders = dict()
+		row.RequestBody = str()
+		row.ResponseHeaders = dict()
+		row.ResponseBody = str()
+		row.ResponseChunks = strs()
+		skip(4)
+		row.RedactionRules = strs()
+		skip(8 + 4 + 32)
+		str()
+		skip(4 * n())
+		skip(16 * n())
+		b, _ := json.Marshal(row)
+		out = append(out, b)
+	}
+	return out
 }

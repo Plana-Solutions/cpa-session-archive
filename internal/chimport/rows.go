@@ -1,6 +1,6 @@
 package chimport
 
-// Row shapes follow cpa-clickhouse-sink v0.1.0-plana.1 capture.go.
+// Row shapes follow cpa-clickhouse-sink v0.1.0-plana.4 capture.go.
 type requestRow struct {
 	RequestID       string            `json:"request_id"`
 	TraceID         string            `json:"trace_id"`

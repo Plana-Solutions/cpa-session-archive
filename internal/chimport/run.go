@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"cpa-session-archive/internal/archive"
@@ -27,6 +29,9 @@ type Options struct {
 	MinFreeBytes                                        uint64
 	DiskCheckBatches                                    int
 	Log                                                 io.Writer
+	FirstID, UpperID                                    int64
+	MaxQuarantined                                      int
+	RetryQuarantined                                    bool
 }
 type checkpoint struct {
 	Identity        string `json:"identity"`
@@ -42,6 +47,7 @@ type checkpoint struct {
 type item struct {
 	ID        int64
 	RequestID string
+	StartedAt string
 }
 
 func openReadOnly(path string) (*archive.Store, error) {
@@ -84,7 +90,7 @@ func save(path string, s checkpoint) error {
 }
 func loadState(o Options, db *sql.DB) (checkpoint, error) {
 	abs, _ := filepath.Abs(o.SQLite)
-	sum := sha256.Sum256([]byte(fmt.Sprintf("archive-v1|%s|%s|%s|%d|%d", abs, o.URL, o.User, o.Newest, o.ExternalSessions)))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("archive-v1|%s|%s|%s|%d|%d|%d|%d", abs, o.URL, o.User, o.Newest, o.ExternalSessions, o.FirstID, o.UpperID)))
 	s := checkpoint{Identity: hex.EncodeToString(sum[:]), Quarantine: map[int64]string{}}
 	b, err := os.ReadFile(o.State)
 	if err == nil {
@@ -105,6 +111,12 @@ func loadState(o Options, db *sql.DB) (checkpoint, error) {
 	}
 	if err = db.QueryRow("SELECT coalesce(max(id),0) FROM records").Scan(&s.UpperID); err != nil {
 		return s, err
+	}
+	if o.UpperID > 0 && o.UpperID < s.UpperID {
+		s.UpperID = o.UpperID
+	}
+	if o.FirstID > 0 {
+		s.LastID = o.FirstID - 1
 	}
 	if o.Newest > 0 {
 		var first sql.NullInt64
@@ -134,7 +146,7 @@ func readIDsOnce(ctx context.Context, db *sql.DB, q string, args ...any) ([]item
 	out := []item{}
 	for rows.Next() {
 		var x item
-		if err = rows.Scan(&x.ID, &x.RequestID); err != nil {
+		if err = rows.Scan(&x.ID, &x.RequestID, &x.StartedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -179,7 +191,13 @@ func Run(ctx context.Context, o Options) error {
 		o.BatchBytes = 16 << 20
 	}
 	if o.DiskCheckBatches == 0 {
-		o.DiskCheckBatches = 100
+		o.DiskCheckBatches = 20
+	}
+	if o.MaxQuarantined == 0 {
+		o.MaxQuarantined = 10
+	}
+	if o.MaxQuarantined < 1 || o.FirstID < 0 || o.UpperID < 0 || (o.Newest > 0 && o.FirstID > 0) {
+		return errors.New("invalid sample or quarantine limits")
 	}
 	if o.BatchBytes < 1 || o.DiskCheckBatches < 1 {
 		return errors.New("invalid batch limits")
@@ -205,6 +223,55 @@ func Run(ctx context.Context, o Options) error {
 	err = retry(ctx, func() error { var e error; s, e = loadState(o, store.DB); return e })
 	if err != nil {
 		return err
+	}
+	originalProgress := s
+	persist := func() error {
+		cp := s
+		if o.RetryQuarantined {
+			cp.LastID = originalProgress.LastID
+			cp.ExternalSession = originalProgress.ExternalSession
+			cp.NativeLastID = originalProgress.NativeLastID
+			cp.NativePosition = originalProgress.NativePosition
+			cp.ExternalDone = originalProgress.ExternalDone
+		}
+		return save(o.State, cp)
+	}
+	batchBad := map[int64]bool{}
+	quarantine := func(id int64, reason string) error {
+		batchBad[id] = true
+		s.Quarantine[id] = reason
+		if err := persist(); err != nil {
+			return err
+		}
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "quarantine_id=%d reason=%s\n", id, reason)
+		}
+		if len(s.Quarantine) >= o.MaxQuarantined {
+			return errors.New("quarantine limit reached")
+		}
+		return nil
+	}
+	finish := func() error {
+		if len(s.Quarantine) > 0 {
+			return fmt.Errorf("import incomplete: %d quarantined rows", len(s.Quarantine))
+		}
+		return nil
+	}
+	retryFilter := ""
+	if o.RetryQuarantined {
+		if len(s.Quarantine) == 0 {
+			return nil
+		}
+		ids := []string{}
+		for id := range s.Quarantine {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		retryFilter = " AND id IN (" + strings.Join(ids, ",") + ")"
+		s.LastID = s.FirstID
+		s.ExternalSession = ""
+		s.NativeLastID = 0
+		s.NativePosition = 0
+		s.ExternalDone = false
 	}
 	c := newClient(o.URL, o.User, o.Password)
 	start := time.Now()
@@ -256,20 +323,20 @@ func Run(ctx context.Context, o Options) error {
 		return ctx.Err()
 	}
 	readRecord := func(x item) (a archive.Record, err error) {
-		err = retry(ctx, func() error { var e error; a, e = store.Request(ctx, x.RequestID); return e })
+		err = retry(ctx, func() error { var e error; a, e = readArchive(ctx, store.DB, x.RequestID); return e })
 		return
 	}
 	for {
 		if err = guard(); err != nil {
 			return err
 		}
-		ids, err := readIDs(ctx, store.DB, "SELECT id,request_id FROM records WHERE id>? AND id<=? AND source_format!='external-native-event' AND (COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'') ORDER BY id LIMIT ?", s.LastID, s.UpperID, o.Batch)
+		ids, err := readIDs(ctx, store.DB, "SELECT id,request_id,started_at FROM records WHERE id>? AND id<=? AND source_format!='external-native-event' AND (COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'')"+retryFilter+" ORDER BY id LIMIT ?", s.LastID, s.UpperID, o.Batch)
 		if err != nil {
 			return err
 		}
 		if len(ids) == 0 {
 			s.LastID = s.UpperID
-			if err = save(o.State, s); err != nil {
+			if err = persist(); err != nil {
 				return err
 			}
 			break
@@ -280,103 +347,179 @@ func Run(ctx context.Context, o Options) error {
 			keys = append(keys, x.RequestID)
 			ukeys = append(ukeys, "archive-v1:"+x.RequestID)
 		}
-		present, err := c.existing(ctx, "requests", keys)
+		lo, hi := "", ""
+		for _, x := range ids {
+			if ts, e := time.Parse(time.RFC3339Nano, x.StartedAt); e == nil {
+				t := stamp(ts)
+				if lo == "" || t < lo {
+					lo = t
+				}
+				if hi == "" || t > hi {
+					hi = t
+				}
+			}
+		}
+		if lo == "" {
+			lo = "1970-01-01 00:00:00.000000000"
+			hi = lo
+		}
+		present, err := c.existing(ctx, "requests", keys, lo, hi)
 		if err != nil {
 			return err
 		}
-		used, err := c.existing(ctx, "usage", ukeys)
+		used, err := c.existing(ctx, "usage", ukeys, lo, hi)
 		if err != nil {
 			return err
 		}
-		var requests, usage []json.RawMessage
-		batchBytes, processed := 0, 0
+		batchBad = map[int64]bool{}
+		var requests, usage [][]byte
+		var requestIDs, usageIDs []int64
+		var bodies []bodyItems
+		batchBytes := 0
 		last := s.LastID
 		for _, x := range ids {
+			if batchBytes >= o.BatchBytes {
+				break
+			}
 			imported, exists := present[x.RequestID]
 			_, hasUsage := used["archive-v1:"+x.RequestID]
-			if _, bad := s.Quarantine[x.ID]; bad {
-				processed++
+			if _, bad := s.Quarantine[x.ID]; bad && !o.RetryQuarantined {
 				last = x.ID
 				continue
 			}
 			if exists && (!imported || hasUsage) {
+				if o.RetryQuarantined {
+					delete(s.Quarantine, x.ID)
+				}
 				skipped++
-				processed++
 				last = x.ID
 				continue
 			}
 			a, err := readRecord(x)
 			if err != nil {
-				if sqliteBusy(err) || ctx.Err() != nil {
+				if !quarantinable(err) || ctx.Err() != nil {
 					return err
 				}
-				s.Quarantine[x.ID] = "payload read failed"
-				processed++
+				if err = quarantine(x.ID, "invalid or missing payload"); err != nil {
+					return err
+				}
 				last = x.ID
 				continue
 			}
 			row, u, err := mapRecord(a, r)
 			if err != nil {
-				s.Quarantine[x.ID] = "invalid archive timestamp"
-				processed++
+				if err = quarantine(x.ID, "invalid archive timestamp"); err != nil {
+					return err
+				}
 				last = x.ID
 				continue
 			}
-			var rb, ub json.RawMessage
+			var rb, ub []byte
+			var body bodyItems
 			if !exists {
-				rb, err = json.Marshal(row)
-				if err != nil {
-					return err
-				}
+				body = splitBody(&row, a.SessionID)
+				rb = encodeBodyRequest(row, body.lineage, body.sk)
 			}
 			if !hasUsage {
-				ub, err = json.Marshal(u)
+				ub, err = encodeJSON(u)
 				if err != nil {
 					return err
 				}
 			}
 			size := len(rb) + len(ub) + 2
+			for _, b := range body.blobs {
+				size += len(b)
+			}
 			if batchFull(batchBytes, size, o.BatchBytes) {
 				break
 			}
 			if rb != nil {
 				requests = append(requests, rb)
+				requestIDs = append(requestIDs, x.ID)
+				bodies = append(bodies, body)
 			}
 			if ub != nil {
 				usage = append(usage, ub)
+				usageIDs = append(usageIDs, x.ID)
 			}
 			batchBytes += size
-			processed++
 			last = x.ID
 		}
-		b, err := c.insert(ctx, "requests", requests)
+		bb, err := c.writeBodies(ctx, bodies)
+		if err != nil && badInsert(err) {
+			// Isolate a bad blob by its carrying archive row before writing any skeleton.
+			for i, body := range bodies {
+				_, e := c.writeBodies(ctx, []bodyItems{body})
+				if e != nil {
+					if !badInsert(e) {
+						return e
+					}
+					if e = quarantine(requestIDs[i], e.Error()); e != nil {
+						return e
+					}
+				}
+			}
+		} else if err != nil {
+			return err
+		}
+		filter := func(rows [][]byte, ids []int64) ([][]byte, []int64) {
+			out := [][]byte{}
+			keys := []int64{}
+			for i, id := range ids {
+				if _, bad := s.Quarantine[id]; (bad && !o.RetryQuarantined) || batchBad[id] {
+					continue
+				}
+				out = append(out, rows[i])
+				keys = append(keys, id)
+			}
+			return out, keys
+		}
+		requests, requestIDs = filter(requests, requestIDs)
+		n, b, err := c.insertSplit(ctx, "requests", requests, requestIDs, quarantine)
 		if err != nil {
 			return err
 		}
-		ub, err := c.insert(ctx, "usage", usage)
+		usage, usageIDs = filter(usage, usageIDs)
+		un, ub, err := c.insertSplit(ctx, "usage", usage, usageIDs, quarantine)
 		if err != nil {
 			return err
 		}
+		if o.RetryQuarantined {
+			for _, id := range usageIDs {
+				if !batchBad[id] {
+					delete(s.Quarantine, id)
+				}
+			}
+		}
+		n = max(n, un)
+
 		s.LastID = last
-		if err = save(o.State, s); err != nil {
+		if err = persist(); err != nil {
 			return err
 		}
-		if err = progress(processed, b+ub, false); err != nil {
+		if err = progress(n, bb+b+ub, false); err != nil {
 			return err
 		}
 	}
 	if o.ExternalSessions == -1 || s.ExternalDone {
-		return nil
+		return finish()
 	}
 	if _, err = c.call(ctx, externalDDL, nil, nil, false); err != nil {
 		return err
 	}
+	if _, err = c.call(ctx, "ALTER TABLE cliproxy.external_messages ADD COLUMN IF NOT EXISTS import_marker LowCardinality(String) DEFAULT ''", nil, nil, false); err != nil {
+		return err
+	}
 	// Session keys are immutable. A fresh state file reconciles all previously imported positions.
-	query := "SELECT 0,id FROM external_sessions WHERE id>? ORDER BY id"
+	query := "SELECT 0,id,'' FROM external_sessions WHERE id>? ORDER BY id"
 	args := []any{s.ExternalSession}
 	if o.ExternalSessions > 0 {
-		query = "SELECT 0,id FROM (SELECT id FROM external_sessions ORDER BY id LIMIT ?) WHERE id>? ORDER BY id"
+		query = "SELECT 0,id,'' FROM (SELECT id FROM external_sessions ORDER BY id LIMIT ?) WHERE id>? ORDER BY id"
 		args = []any{o.ExternalSessions, s.ExternalSession}
+	}
+	if o.RetryQuarantined {
+		query = "SELECT 0,id,'' FROM external_sessions WHERE id>? AND id IN (SELECT session_id FROM records WHERE 1=1" + retryFilter + ") ORDER BY id"
+		args = []any{s.ExternalSession}
 	}
 	sessions, err := readIDs(ctx, store.DB, query, args...)
 	if err != nil {
@@ -386,7 +529,7 @@ func Run(ctx context.Context, o Options) error {
 		sid := session.RequestID
 		last, pos := s.NativeLastID, s.NativePosition
 		for {
-			ids, err := readIDs(ctx, store.DB, "SELECT r.id,r.request_id FROM records r WHERE r.session_id=? AND r.id>? AND r.id<=? AND r.source_format='external-native-event' ORDER BY r.id LIMIT ?", sid, last, s.UpperID, o.Batch)
+			ids, err := readIDs(ctx, store.DB, "SELECT r.id,r.request_id,r.started_at FROM records r WHERE r.session_id=? AND r.id>? AND r.id<=? AND r.source_format='external-native-event' "+strings.ReplaceAll(retryFilter, "id IN", "r.id IN")+" ORDER BY r.id LIMIT ?", sid, last, s.UpperID, o.Batch)
 			if err != nil {
 				return err
 			}
@@ -396,35 +539,46 @@ func Run(ctx context.Context, o Options) error {
 			if err = guard(); err != nil {
 				return err
 			}
-			var rows []json.RawMessage
-			batchBytes, processed := 0, 0
+			batchBad = map[int64]bool{}
+			var rows [][]byte
+			var rowIDs []int64
+			batchBytes := 0
 			for _, x := range ids {
-				if _, bad := s.Quarantine[x.ID]; bad {
+				if batchBytes >= o.BatchBytes {
+					break
+				}
+				if _, bad := s.Quarantine[x.ID]; bad && !o.RetryQuarantined {
 					pos++
 					last = x.ID
-					processed++
 					continue
 				}
 				a, err := readRecord(x)
 				if err != nil {
-					if sqliteBusy(err) || ctx.Err() != nil {
+					if !quarantinable(err) || ctx.Err() != nil {
 						return err
 					}
-					s.Quarantine[x.ID] = "native payload read failed"
+					if err = quarantine(x.ID, "invalid or missing native payload"); err != nil {
+						return err
+					}
 					pos++
 					last = x.ID
-					processed++
 					continue
+				}
+				if o.RetryQuarantined {
+					if err = store.DB.QueryRowContext(ctx, "SELECT count(*) FROM records WHERE session_id=? AND source_format='external-native-event' AND id<?", sid, x.ID).Scan(&pos); err != nil {
+						return err
+					}
 				}
 				row, err := mapExternal(a, pos, r)
 				if err != nil {
-					s.Quarantine[x.ID] = "invalid native event or timestamp"
+					if err = quarantine(x.ID, "invalid native event or timestamp"); err != nil {
+						return err
+					}
 					pos++
 					last = x.ID
-					processed++
 					continue
 				}
-				raw, err := json.Marshal(row)
+				raw, err := encodeJSON(row)
 				if err != nil {
 					return err
 				}
@@ -432,31 +586,41 @@ func Run(ctx context.Context, o Options) error {
 					break
 				}
 				rows = append(rows, raw)
+				rowIDs = append(rowIDs, x.ID)
 				batchBytes += len(raw) + 1
 				pos++
 				last = x.ID
-				processed++
 			}
-			b, err := c.insert(ctx, "external_messages", rows)
+			n, b, err := c.insertSplit(ctx, "external_messages", rows, rowIDs, quarantine)
 			if err != nil {
 				return err
 			}
+			if o.RetryQuarantined {
+				for _, id := range rowIDs {
+					if !batchBad[id] {
+						delete(s.Quarantine, id)
+					}
+				}
+			}
 			s.NativeLastID, s.NativePosition = last, pos
-			if err = save(o.State, s); err != nil {
+			if err = persist(); err != nil {
 				return err
 			}
-			if err = progress(processed, b, true); err != nil {
+			if err = progress(n, b, true); err != nil {
 				return err
 			}
 		}
 		s.ExternalSession = sid
 		s.NativeLastID, s.NativePosition = 0, 0
-		if err = save(o.State, s); err != nil {
+		if err = persist(); err != nil {
 			return err
 		}
 	}
 	s.ExternalDone = true
-	return save(o.State, s)
+	if err := persist(); err != nil {
+		return err
+	}
+	return finish()
 }
 
 func batchFull(current, next, limit int) bool {
