@@ -13,6 +13,7 @@ module.exports = defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
+    stdout: "pipe",
     command: "node e2e/mock-server.cjs",
     url: "http://127.0.0.1:4173/healthz",
     reuseExistingServer: true,
