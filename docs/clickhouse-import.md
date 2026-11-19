@@ -11,6 +11,7 @@ Use a separate cluster volume with space for the approximately 12 GB SQLite copy
 ```sh
 sudo -n mkdir -p /mnt/cpa-import-snapshot
 sudo -n chmod 700 /mnt/cpa-import-snapshot
+sudo -n mountpoint -q /mnt/cpa-import-snapshot || exit 1
 sudo -n systemd-run --scope --unit=cpa-archive-backup \
   -p CPUQuota=50% -p MemoryMax=1G \
   nice -n 19 ionice -c3 sqlite3 \
@@ -80,7 +81,7 @@ The default batch is 16 records and 16 MiB of encoded rows plus item bytes. One 
 
 ## Retained data and limits
 
-The importer redacts complete rows with the released `redact` package and production YAML and auth sources before splitting or buffering them. `bodystore.Split`, `Lineage`, `EncodeSkeleton`, and `EncodeBlob` use the live format. Missing lineage falls back to `archive:` plus the archive session ID. Only committed hashes are preloaded, bounded to the current batch's lineages and references. Failed blob writes prevent corresponding skeletons. Responses stay inline. Reconstructed bytes equal the redacted, expanded archived body. CAS expansion had already reserialized some original client JSON, so this is not proof of equality with original client wire bytes.
+The importer redacts complete rows with the released `redact` package and production YAML and auth sources before splitting or buffering them. `bodystore.Split`, `Lineage`, `EncodeSkeleton`, and `EncodeBlob` use the live format. Missing lineage falls back to `archive:` plus the archive session ID. Only committed hashes are preloaded, bounded to the current batch's lineages and distinct references in queries of at most 256 hashes. Failed blob writes prevent corresponding skeletons. Responses stay inline. Reconstructed bytes equal the redacted, expanded archived body. CAS expansion had already reserialized some original client JSON, so this is not proof of equality with original client wire bytes.
 
 Available archived headers remain intact, with credential headers removed. Codex turn and window headers are rebuilt from retained thread, turn, request-kind, thread-source, and window facets. The importer preserves live fingerprint identities. Only an empty identity can use a generic archive session fallback. Client names come from the released extractor. Truncation has its own header. All requests carry `x-plana-import=archive-v1`.
 
@@ -112,4 +113,4 @@ WHERE import_marker='archive-v1'
 SETTINGS lightweight_deletes_sync=2;
 ```
 
-Verify that marker rows and their facts are absent, then restart the normal deriver loop. Never use `deriver --rebuild`, truncate a shared table, or drop a monthly partition. Retain the rollback ID table until verification is complete. Blob keys can be shared with live requests. Leave blobs in place during rollback. Remove only confirmed unreferenced blobs later under the sink's retention rules. Lightweight deletes reclaim storage on later merges and need temporary disk headroom.
+Verify that marker rows and their facts are absent, then restart the normal deriver loop. Never use `deriver --rebuild`, truncate a shared table, or drop a monthly partition. Retain the rollback ID table until verification is complete. After interruption, resume the deletes using that frozen table. Never regenerate its IDs from partially deleted tables. Blob keys can be shared with live requests. Leave blobs in place during rollback. Remove only confirmed unreferenced blobs later under the sink's retention rules. Lightweight deletes reclaim storage on later merges and need temporary disk headroom.
