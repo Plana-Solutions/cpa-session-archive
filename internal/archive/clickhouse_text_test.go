@@ -9,6 +9,7 @@ func TestFirstUserText(t *testing.T) {
 		want      string
 		continued bool
 	}{
+		{"datetime", []string{"<current_datetime>2026-11-19T01:00:00Z</current_datetime>\n\nFix the title"}, "Fix the title", false},
 		{"claude", []string{"<system-reminder>Codebase and user instructions are shown below. IMPORTANT: follow CLAUDE.md.</system-reminder>", "<system-reminder>gitStatus: clean</system-reminder>", "Fix the archive titles"}, "Fix the archive titles", false},
 		{"codex", []string{"# AGENTS.md instructions for /workspace\n<INSTRUCTIONS>Use Go.</INSTRUCTIONS>", "<environment_context><cwd>/workspace</cwd></environment_context>", "Please add pagination"}, "Please add pagination", false},
 		{"inline context", []string{"<environment_context>cwd=/repo</environment_context>\n<userRequest>Keep my actual prompt</userRequest>"}, "Keep my actual prompt", false},

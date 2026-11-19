@@ -129,9 +129,9 @@ func TestClickHouseMixedBodies(t *testing.T) {
 			for _, format := range []string{"archive", "sft"} {
 				q := url.Values{"id": {"fixture-" + row.ID}, "format": {format}}
 				if broken {
-					_, err = c.read("export", q)
-					if !errors.Is(err, bodystore.ErrIncomplete) {
-						t.Fatalf("%s accepted incomplete body: %v", format, err)
+					ticket, e := c.read("export", q)
+					if e != nil || ticket.(map[string]any)["skipped_incomplete"] != 1 || ticket.(map[string]any)["next_offset"] != 1 {
+						t.Fatalf("%s did not skip incomplete body: %v %v", format, ticket, e)
 					}
 					continue
 				}
@@ -165,6 +165,12 @@ func TestClickHouseMixedBodies(t *testing.T) {
 				}
 			}
 		})
+	}
+	for _, format := range []string{"archive", "sft"} {
+		content, _ := collectExport(t, c, url.Values{"scope": {"all"}, "format": {format}})
+		if content == "" {
+			t.Fatal("incomplete body aborted all-session export")
+		}
 	}
 	// During migration both physical formats can be visible. Prefer and verify the skeleton.
 	chExec(t, c, `INSERT INTO cliproxy.requests (request_id,started_at,completed_at,request_body) SELECT request_id,started_at,completed_at,'wrong legacy copy' FROM cliproxy.requests WHERE request_id='dedup'`)

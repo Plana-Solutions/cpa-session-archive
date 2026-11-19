@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Plana-Solutions/cpa-clickhouse-sink/bodystore"
 )
 
 // Export chunks are UTF-8 slices of complete JSONL records. The client concatenates them without parsing partial records.
@@ -116,9 +119,9 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		}
 	} else {
 		var rows []clickhouseTurn
-		selectSQL := `SELECT request_id AS turn_id,started_at AS first_at,model,outcome,status_code FROM {db:Identifier}.request_facts WHERE ` + timeFilter + ` AND conversation_id={session:String} AND ` + conversationTraffic
+		selectSQL := `SELECT request_id AS turn_id,started_at AS first_at,model,outcome,status_code FROM {db:Identifier}.request_facts AS f WHERE ` + timeFilter + ` AND conversation_id={session:String} AND ` + conversationTraffic
 		if format == "sft" {
-			selectSQL = `SELECT * FROM (` + selectSQL + ` AND outcome='succeeded' AND status_code BETWEEN 200 AND 299 ORDER BY started_at DESC,request_id DESC LIMIT 1)`
+			selectSQL = `SELECT * FROM (` + selectSQL + ` AND outcome='succeeded' AND status_code BETWEEN 200 AND 299 AND NOT ` + groupedSideCall + ` ORDER BY started_at DESC,request_id DESC LIMIT 1)`
 		}
 		if format == "archive" {
 			selectSQL = numberedTurns + `SELECT argMax(request_id,(started_at,request_id)) AS turn_id,max(started_at) AS first_at,argMax(model,(started_at,request_id)) AS model,argMax(outcome,(started_at,request_id)) AS outcome,argMax(status_code,(started_at,request_id)) AS status_code FROM grouped GROUP BY turn_key HAVING turn_id IN (SELECT request_id FROM {db:Identifier}.requests WHERE ` + timeFilter + `)`
@@ -141,17 +144,18 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 				rw.params.Set("from", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
 				rw.params.Set("to", t.FirstAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
 				rw.params.Set("id", t.TurnID)
+				r, e := c.rawRequest(ctx, rw, t)
+				if errors.Is(e, bodystore.ErrIncomplete) {
+					ticket["skipped_incomplete"] = 1
+					ticket["next_offset"] = offset + 1
+					return ticket, nil
+				}
+				if e != nil {
+					return nil, e
+				}
 				if format == "archive" {
-					r, e := c.rawRequest(ctx, rw, t)
-					if e != nil {
-						return nil, e
-					}
 					content, _ = json.Marshal(map[string]any{"request_id": r.RequestID, "session_id": id, "trace_id": r.TraceID, "model": r.Model, "requested_model": r.RequestedModel, "source_format": r.SourceFormat, "outcome": r.Outcome, "status_code": r.StatusCode, "started_at": r.StartedAt, "completed_at": r.CompletedAt, "original_request": base64.StdEncoding.EncodeToString(r.OriginalRequest), "response": base64.StdEncoding.EncodeToString(r.Response)})
 				} else {
-					r, e := c.rawRequest(ctx, rw, t)
-					if e != nil {
-						return nil, e
-					}
 					content, err = c.trainingSnapshot(ctx, rw, r)
 					if err != nil {
 						return nil, err

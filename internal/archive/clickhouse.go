@@ -93,7 +93,7 @@ func (c *clickhouseReader) query(ctx context.Context, sql string, params url.Val
 	q.Set("param_db", c.config.Database)
 	for k, v := range params {
 		if len(v) > 0 {
-			q.Set("param_"+k, v[0])
+			q.Set("param_"+k, strings.ReplaceAll(v[0], `\`, `\\`))
 		}
 	}
 	q.Set("default_format", "JSONEachRow")
@@ -185,7 +185,7 @@ func (c *clickhouseReader) externalExists(ctx context.Context) (bool, error) {
 func (c *clickhouseReader) read(endpoint string, q url.Values) (any, error) {
 	return c.readContext(context.Background(), endpoint, q)
 }
-func (c *clickhouseReader) readContext(parent context.Context, endpoint string, q url.Values) (any, error) {
+func (c *clickhouseReader) readContext(parent context.Context, endpoint string, q url.Values) (out any, readErr error) {
 	if endpoint == "cancel-search" {
 		c.searchesMu.Lock()
 		if search := c.searches[q.Get("search_client")]; search != nil {
@@ -194,7 +194,18 @@ func (c *clickhouseReader) readContext(parent context.Context, endpoint string, 
 		c.searchesMu.Unlock()
 		return map[string]string{"status": "ok"}, nil
 	}
-	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	timeout := 60 * time.Second
+	search := endpoint == "sessions" && q.Get("q") != ""
+	if search {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer func() {
+		if search && (errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(readErr, context.DeadlineExceeded)) {
+			out = nil
+			readErr = &archiveReadError{504, "search timed out, narrow the range"}
+		}
+	}()
 	defer cancel()
 	if endpoint == "sessions" && q.Get("search_client") != "" {
 		c.searchesMu.Lock()
@@ -277,7 +288,10 @@ const factsWithUsage = `FROM {db:Identifier}.request_facts AS f LEFT JOIN
  WHERE u.requested_at >= {from:DateTime64(9,'UTC')} AND u.requested_at < {to:DateTime64(9,'UTC')} + INTERVAL 1 HOUR
  GROUP BY lifecycle_request_id) AS u ON f.request_id=u.lifecycle_request_id`
 
+const systemSession = `(kind='compact' OR (request_kind!='' AND request_kind!='turn') OR thread_source='system' OR endsWith(conversation_id,':compaction') OR startsWith(last_user_text,'Generate a title that will help the user recognize this T3 Code thread') OR startsWith(last_user_text,'You generate concise git branch names.') OR startsWith(last_user_text,'You are performing a CONTEXT CHECKPOINT COMPACTION.'))`
+
 type archiveSession struct {
+	System       bool      `json:"system,omitempty"`
 	SessionID    string    `json:"session_id"`
 	Continued    bool      `json:"continued,omitempty"`
 	Summary      string    `json:"summary"`
@@ -342,7 +356,11 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 	if filters != unfiltered {
 		selection = ` AND conversation_id IN (SELECT conversation_id ` + source + ` WHERE ` + filters + ` GROUP BY conversation_id)`
 	}
-	sql := `SELECT conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE conversation_id!='' AND ` + timeFilter + ` AND ` + conversationTraffic + selection + ` GROUP BY conversation_id`
+	having := ""
+	if q.Get("show_system") != "1" {
+		having = ` HAVING NOT system`
+	}
+	sql := `SELECT CAST(max(` + systemSession + `),'Bool') AS system,conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE conversation_id!='' AND ` + timeFilter + ` AND ` + conversationTraffic + selection + ` GROUP BY conversation_id` + having
 	present, err := c.externalExists(ctx)
 	if err != nil {
 		return nil, err
@@ -366,9 +384,9 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 		if q.Get("q") != "" {
 			ef += ` AND ((role='user' AND positionCaseInsensitiveUTF8(text,{search:String})>0) OR positionCaseInsensitiveUTF8(title,{search:String})>0 OR positionCaseInsensitiveUTF8(session_id,{search:String})>0 OR positionCaseInsensitiveUTF8(project,{search:String})>0 OR positionCaseInsensitiveUTF8(source,{search:String})>0)`
 		}
-		sql += ` UNION ALL SELECT concat('external:',session_id),substringUTF8(argMin(title,position),1,200),any(project),'','',any(source),count(),min(ts),max(ts),toInt64(0),toInt64(0),toInt64(0),'external-local-history',any(source) FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id IN (SELECT session_id FROM {db:Identifier}.external_messages FINAL WHERE ` + ef + `) GROUP BY session_id`
+		sql += ` UNION ALL SELECT false,concat('external:',session_id),substringUTF8(argMin(title,position),1,200),any(project),'','',any(source),count(),min(ts),max(ts),toInt64(0),toInt64(0),toInt64(0),'external-local-history',any(source) FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id IN (SELECT session_id FROM {db:Identifier}.external_messages FINAL WHERE ` + ef + `) GROUP BY session_id`
 	}
-	sql = `SELECT session_id,summary,project,key_id,model,client,requests,first_at,last_at,input_tokens,output_tokens,total_tokens,source_kind,source_tool FROM (` + sql + `) ORDER BY last_at DESC,session_id LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
+	sql = `SELECT system,session_id,summary,project,key_id,model,client,requests,first_at,last_at,input_tokens,output_tokens,total_tokens,source_kind,source_tool FROM (` + sql + `) ORDER BY last_at DESC,session_id LIMIT {limit:UInt32} OFFSET {offset:UInt32}`
 	rows := []archiveSession{}
 	err = c.query(ctx, sql, w.params, &rows)
 	if err != nil {
@@ -477,7 +495,7 @@ func (c *clickhouseReader) facets(ctx context.Context, w readWindow) (any, error
 func (c *clickhouseReader) insights(ctx context.Context, w readWindow, q url.Values) (Insights, error) {
 	out := Insights{From: w.from.Format(time.RFC3339Nano), To: w.to.Format(time.RFC3339Nano), GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), WindowDays: int(w.to.Sub(w.from).Hours()/24) + 1, Models: []ModelInsight{}, Daily: []DailyInsight{}}
 	var totals []InsightTotals
-	err := c.query(ctx, `SELECT count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='' AND NOT `+sideCall+`) + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,uniqExact(model) AS models FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` LIMIT 1`, w.params, &totals)
+	err := c.query(ctx, `SELECT count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='' AND NOT `+sideCall+`) + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,uniqExact(model) AS models FROM (SELECT *,row_number() OVER (PARTITION BY conversation_id ORDER BY started_at,request_id) AS rn FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+`) LIMIT 1`, w.params, &totals)
 	if err != nil {
 		return out, err
 	}
@@ -491,7 +509,7 @@ func (c *clickhouseReader) insights(ctx context.Context, w readWindow, q url.Val
 	w.params.Set("minimum", strconv.Itoa(minimum))
 	err = c.query(ctx, `SELECT model,count() AS requests,uniqExactIf(conversation_id,conversation_id!='') AS sessions,uniqExactIf(tuple(conversation_id,turn_id),turn_id!='' AND conversation_id!='' AND NOT `+sideCall+`) + countIf(turn_id='' AND conversation_id!='' AND `+turnStart+`) AS turns,if(turns>0,countIf(conversation_id!='')/turns,0) AS steps_per_turn,
  ifNotFinite(avgIf(duration_ms/1000,outcome='succeeded'),0) AS avg_latency_seconds,countIf(outcome IN ('failed','rejected'))/count() AS failure_rate,countIf(outcome='canceled')/count() AS cancel_rate
- FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` GROUP BY model HAVING requests >= {minimum:UInt32} ORDER BY requests DESC,model LIMIT 200`, w.params, &out.Models)
+ FROM (SELECT *,row_number() OVER (PARTITION BY conversation_id ORDER BY started_at,request_id) AS rn FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+`) GROUP BY model HAVING requests >= {minimum:UInt32} ORDER BY requests DESC,model LIMIT 200`, w.params, &out.Models)
 	if err != nil {
 		return out, err
 	}

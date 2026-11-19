@@ -454,7 +454,7 @@ func meaningfulUserText(value string) string {
 	for {
 		lower = strings.ToLower(value)
 		matched := false
-		for _, tag := range []string{"environment_context", "environment_info", "workspace_info", "in-app-browser-context", "app-context", "context", "editorcontext", "reminderinstructions", "codex_internal_context", "system-reminder", "command-name", "command-message", "command-args", "local-command-caveat", "local-command-stdout", "skill"} {
+		for _, tag := range []string{"current_datetime", "environment_context", "environment_info", "workspace_info", "in-app-browser-context", "app-context", "context", "editorcontext", "reminderinstructions", "codex_internal_context", "system-reminder", "command-name", "command-message", "command-args", "local-command-caveat", "local-command-stdout", "skill"} {
 			open := "<" + tag
 			if !strings.HasPrefix(lower, open) {
 				continue

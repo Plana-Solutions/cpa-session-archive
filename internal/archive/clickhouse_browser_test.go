@@ -98,6 +98,7 @@ func seedBrowserFixture(t *testing.T, c *clickhouseReader) {
 	if err = json.Unmarshal(b, &source); err != nil {
 		t.Fatal(err)
 	}
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,started_at,ingested_at,conversation_id,kind,last_user_text) VALUES ('system-title',now64(9)-INTERVAL 90 DAY,now64(9),'codex:system-title','responses','Generate a title that will help the user recognize this T3 Code thread weeks later.')`)
 	base := time.Now().UTC().Add(-time.Hour)
 	models := []string{"gpt-6.1-sol", "claude-opus-5-5", "claude-sonnet-5-5", "gpt-6-astra", "gemini-3-pro", "kimi-k3"}
 	for m, model := range models {

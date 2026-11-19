@@ -1057,6 +1057,7 @@
             </div>
           </details>
         </div>
+        <div><label><input id="showSystemSessions" type="checkbox" onchange="loadSessions()" /> <span data-i18n="showSystemSessions"></span></label></div>
         <div id="activeFilters" class="active-filters"></div>
         <section class="sessions-panel">
           <div class="section-head">
@@ -1370,6 +1371,8 @@
           kindContextRebuild: "压缩后的上下文重建",
           kindToolContinuation: "工具结果续传",
           kindPrewarm: "后台预热",
+          showSystemSessions: "显示系统任务",
+          skippedIncomplete: "已跳过 {count} 条不完整记录",
           systemTask: "系统任务",
           historyItemsFolded:
             "已折叠 {count} 项历史上下文；本页只展示相对上一请求新增的内容。",
@@ -1544,6 +1547,8 @@
           kindContextRebuild: "Context rebuilt after compaction",
           kindToolContinuation: "Tool result continuation",
           kindPrewarm: "Background prewarm",
+          showSystemSessions: "Show system sessions",
+          skippedIncomplete: "Skipped {count} incomplete records",
           systemTask: "System task",
           historyItemsFolded:
             "{count} historical context items were folded. This page shows only content added since the previous request.",
@@ -2243,6 +2248,7 @@
           q.set(name, appliedFacets[name]);
         });
         q.set("limit", appliedLimit);
+        if(document.getElementById("showSystemSessions").checked) q.set("show_system", "1");
  q.set("search_client",searchClient);
         if (sessionList.query) q.set("q", sessionList.query);
         var rows;
@@ -2307,7 +2313,7 @@
           var title = titleText(row.summary || row.project);
           var badges = ExternalArchive.badge(row);
           if (row.continued) badges += '<span class="kind-badge">continued</span>';
-          if ((row.thread_sources || []).includes("system")) badges += '<span class="kind-badge">' + esc(t("systemTask")) + '</span>';
+          if (row.system || (row.thread_sources || []).includes("system")) badges += '<span class="kind-badge">' + esc(t("systemTask")) + '</span>';
           if ((row.kinds || []).length === 1 && row.kinds[0] === "prewarm") badges += '<span class="kind-badge">' + esc(t("kindPrewarm")) + '</span>';
           return '<a class="session-row" href="#/sessions/' + encodeURIComponent(row.session_id) + '"><div class="session-copy"><div class="conversation-title" title="' + esc(title) + '">' + esc(title) + '</div><div class="conversation-meta">' +
             [
@@ -2861,13 +2867,14 @@
         try {
           var query = new URLSearchParams({ scope: scope, format: format });
           if (scope === "session") query.set("id", detailSessionID);
-          var parts = [], ticket, exportBytes = 0;
+          var parts = [], ticket, exportBytes = 0, skippedIncomplete = 0;
           var exportLimit = 64 * 1024 * 1024;
           do {
             var response = await fetch(session.base + "/v0/management/plugins/cpa-session-archive/export?" + query,
               {headers:{Authorization:"Bearer "+session.key}});
             if(!response.ok) throw Error("HTTP "+response.status+": "+await response.text());
             ticket = await response.json();
+            skippedIncomplete += ticket.skipped_incomplete || 0;
             if(ticket.content !== undefined) {
               var chunk = new TextEncoder().encode(ticket.content);
               exportBytes += chunk.byteLength;
@@ -2890,7 +2897,7 @@
           if (notice) {
             notice.innerHTML =
               "<div>" +
-              esc(t("downloadReady")) +
+              esc(t("downloadReady")) + (skippedIncomplete ? " · " + esc(t("skippedIncomplete", {count: skippedIncomplete})) : "") +
               '</div><a href="' +
               esc(url) +
               '">' +

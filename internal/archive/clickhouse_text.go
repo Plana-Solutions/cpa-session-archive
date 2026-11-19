@@ -63,12 +63,18 @@ func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids [
 	return out, nil
 }
 
+const searchTextMatch = `arrayExists(x->positionCaseInsensitiveUTF8(replaceRegexpAll(decodeHTMLComponent(x),'(?is)<t3_context[^>]*>.*?</t3_context>',''),{search:String})>0
+ OR (position(x,'t3-citation://')>0 AND positionCaseInsensitiveUTF8(decodeURLComponent(replaceAll(x,'+',' ')),{search:String})>0)
+ OR (startsWith({search:String},'/') AND position(x,'<command-name>')>0),` + userTextItems + `)`
+
+const searchTurnStart = `(NOT ` + sideCall + ` AND NOT ` + tailHasTool + ` AND ` + tailHasUser + `)`
+
 // Search the most recently active candidates first. Common terms stop at the page;
 // rare terms expand the candidate set. Titles and search share the same cleanup.
 func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, source, filters string, wanted int) ([]string, error) {
 	for size := max(80, wanted); ; size *= 8 {
 		if size > 640 {
-			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+turnStart, 1000000)
+			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+searchTurnStart, 1000000)
 		}
 
 		w.params.Set("candidates", strconv.Itoa(size))
@@ -101,7 +107,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		// Restrict the primary time key before reading candidate text.
 		w.params.Set("search_from", lo)
 		w.params.Set("search_to", hi)
-		matches, err := c.matchingConversations(ctx, w, `started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+turnStart, size)
+		matches, err := c.matchingConversations(ctx, w, `started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+searchTurnStart, size)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +139,7 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 			StartedAt time.Time `json:"started_at"`
 			Bytes     uint64    `json:"bytes"`
 		}
-		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,length(toJSONString(`+userTextItems+`)) AS bytes FROM {db:Identifier}.request_facts PREWHERE `+where+seek+` ORDER BY started_at DESC,request_id DESC LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &rows)
+		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,length(toJSONString(`+userTextItems+`)) AS bytes FROM {db:Identifier}.request_facts PREWHERE `+where+seek+` AND `+searchTextMatch+` ORDER BY started_at DESC,request_id DESC LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &rows)
 		if err != nil {
 			return nil, err
 		}

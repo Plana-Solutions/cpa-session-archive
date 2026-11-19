@@ -46,7 +46,7 @@ const sideCallShape = `(prior_seen AND input_items=2 AND length(tools_offered)<=
  WHERE ` + timeFilter + ` AND ` + conversationTraffic + ` GROUP BY conversation_id))`
 const sideCall = `(turn_id='' AND ` + sideCallShape + `)`
 const groupedSideCall = `(f.turn_id='' AND ` + sideCallShape + `)`
-const turnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
+const turnStart = `(NOT ` + sideCall + ` AND (rn=1 OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 const turnUserText = `arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type)`
 
 // Keep turn identity shared by lists, detail and exports. A tool-result tail continues a Claude turn even when it includes user text.
