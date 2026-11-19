@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS cliproxy.external_messages (
  role LowCardinality(String), type LowCardinality(String), tool_name LowCardinality(String),
  text String CODEC(ZSTD(3)), ingested_at DateTime64(9,'UTC') DEFAULT now64(9)
 ) ENGINE=ReplacingMergeTree(ingested_at) ORDER BY (session_id,position);
+ALTER TABLE cliproxy.external_messages
+ ADD COLUMN IF NOT EXISTS import_marker LowCardinality(String) DEFAULT '';
 ```
 
 ## Retire the collector and use its static file
@@ -87,7 +89,7 @@ Require `ok` from `quick_check`. Record the digest and highest record ID with th
 
 ## Pass the sample gates
 
-Use a throwaway ClickHouse 25.8 server with hostname `cpa-archive-import-sample`, an isolated Docker network, and a loopback HTTP endpoint. Set the container cap to 1.5 GiB, the server memory ratio to `0.75`, the mark cache to 64 MiB, and `merge_max_block_size=256`. Never run either verification command against production. Both reject other hostnames and non-loopback URLs.
+Use a throwaway ClickHouse 25.8 server with hostname `cpa-archive-import-sample`, an isolated Docker network, and a loopback HTTP endpoint. Set the container cap to 1.5 GiB, the server memory ratio to `0.75`, the mark cache to 64 MiB, and `merge_max_block_size=256`. Never run either verification command against production. Both reject other hostnames and non-loopback URLs. Pass `--dedup-final` for throwaway imports to confirm that dedup stays enabled for that disposable database. This does not confirm the production rollout.
 
 1. Import `--newest 2000 --external-sessions 50` with a dedicated checkpoint. Rehearse the released deriver in loop mode alongside the importer for at least 30 minutes. Pause only that deriver for ten minutes, resume it, and observe its backlog drain. Retain the peak query memory, container memory, lag samples, exceptions, and process exit codes.
 2. Run the same importer with `--verify-sample`, the same `--sqlite` and `--state`, and the existing redaction sources. Redirect stdout to a private `expected.jsonl`. This reads and redacts each archived request again, reconstructs its stored body with `bodystore.Reader`, checks byte equality and every digest, and emits only IDs, digests, and expected identities from the released extractor.
@@ -121,7 +123,7 @@ Build the reviewed commit on Linux ARM64 and compare its sha256 with the round-4
 ```sh
 sudo -n systemd-run --unit=cpa-archive-clickhouse-import --collect \
   -p Type=exec -p Restart=no -p CPUQuota=50% -p MemoryMax=1G \
-  -p TimeoutStopSec=10min \
+  -p TimeoutStopSec=infinity \
   -p StandardOutput=append:/root/cpa-archive-clickhouse-import.log \
   -p StandardError=append:/root/cpa-archive-clickhouse-import.log \
   env GOMAXPROCS=1 \
@@ -141,7 +143,7 @@ sudo -n systemd-run --unit=cpa-archive-clickhouse-import --collect \
 
 Substitute the settled backup path only when using the mounted-volume procedure. Check `systemctl status cpa-archive-clickhouse-import.service` and the appended log for the actual exit result. Do not infer success from `systemd-run` returning zero.
 
-Send SIGINT, SIGTERM, or SIGHUP to finish the current batch, save its checkpoint, and exit. The active batch keeps its bounded HTTP timeout and retry budget. A forced kill may leave it partly inserted. Investigate the stop before resuming the exact command and checkpoint.
+Send SIGINT, SIGTERM, or SIGHUP to finish the current batch, save its checkpoint, and exit. The active batch keeps its bounded HTTP timeout and retry budget. The service waits for that graceful exit; investigate a stuck batch before choosing a forced kill. A forced kill may leave it partly inserted. Investigate the stop before resuming the exact command and checkpoint.
 
 ```sh
 sudo -n systemctl kill --signal=SIGINT --kill-whom=main cpa-archive-clickhouse-import.service
