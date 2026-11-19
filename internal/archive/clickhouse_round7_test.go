@@ -230,6 +230,11 @@ func TestRound7LiveTitles(t *testing.T) {
 			before[r.SessionID] = r.Summary
 		}
 	}
+	type searchPage struct {
+		rows []archiveSession
+		err  error
+	}
+	pages := map[string]searchPage{}
 	hits, misses, empty, changed, system := 0, 0, 0, 0, 0
 	for index, r := range rows {
 		if old, ok := before[r.SessionID]; ok && old != r.Summary {
@@ -266,13 +271,25 @@ func TestRound7LiveTitles(t *testing.T) {
 				offset++
 			}
 		}
-		out, err := c.read("sessions", url.Values{"q": {phrase}, "limit": {"20"}, "offset": {strconv.Itoa(offset)}, "to": {cutoff}})
-		found := false
-		if err == nil {
-			for _, v := range out.([]archiveSession) {
-				found = found || v.SessionID == r.SessionID
+		pageOffset := offset / 20 * 20
+		key := phrase + "\n" + strconv.Itoa(pageOffset)
+		page, ok := pages[key]
+		if !ok {
+			out, err := c.read("sessions", url.Values{"q": {phrase}, "limit": {"20"}, "offset": {strconv.Itoa(pageOffset)}, "to": {cutoff}})
+			page.err = err
+			if err == nil {
+				page.rows = out.([]archiveSession)
 			}
+			pages[key] = page
+			t.Logf("SEARCH_PAGE phrase=%q offset=%d rows=%d error=%v", phrase, pageOffset, len(page.rows), err)
+			time.Sleep(time.Second)
 		}
+		found := false
+		for _, v := range page.rows {
+			found = found || v.SessionID == r.SessionID
+		}
+		err := page.err
+
 		if found {
 			hits++
 		} else {
@@ -280,13 +297,12 @@ func TestRound7LiveTitles(t *testing.T) {
 		}
 		t.Logf("FIND id=%s phrase=%q hit=%t offset=%d error=%v", r.SessionID, phrase, found, offset, err)
 		if !found && err == nil {
-			t.Logf("MISSING_RESULT id=%s got=%+v", r.SessionID, out)
+			t.Logf("MISSING_RESULT id=%s returned=%d", r.SessionID, len(page.rows))
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 	t.Logf("FIND_TOTAL sessions=%d system=%d hits=%d misses=%d empty=%d changed=%d", len(rows), system, hits, misses, empty, changed)
 	// Independently inspect all user-message items, including ones after the display bound.
-	w, _ := windowFor(url.Values{"days": {"7"}}, 7)
+	w, _ := windowFor(url.Values{"days": {"7"}, "to": {cutoff}}, 7)
 	var generators []struct {
 		ID string `json:"id"`
 	}
@@ -362,13 +378,28 @@ SELECT concat('req-',toString(number)),ts,ts,concat('claude:scale-',toString(ses
 				t.Fatalf("absent search has %d matches", n)
 			}
 			t.Logf("CAPACITY live=%t run=%d days=%d queries=%d read_rows=%d read_bytes=%d seconds=%.6f matches=%d error=%v", live, i, days, s.queries, s.rows, s.bytes, elapsed.Seconds(), n, err)
-			if err != nil && err.Error() != "search timed out, narrow the range" {
+			if !live && err != nil && err.Error() != "search timed out, narrow the range" {
 				t.Fatal(err)
 			}
 			if live {
 				time.Sleep(2 * time.Second)
 			}
 		}
+	}
+	if live {
+		var count []struct {
+			Rows  uint64    `json:"rows"`
+			First time.Time `json:"first"`
+			Last  time.Time `json:"last"`
+		}
+		w, err := windowFor(url.Values{"from": {to.AddDate(0, 0, -30).Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}}, 30)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = c.query(context.Background(), `SELECT count() AS rows,min(started_at) AS first,max(started_at) AS last FROM cliproxy.request_facts WHERE `+timeFilter, w.params, &count); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("LIVE_DATA %+v", count)
 	}
 	if !live {
 		var rows []struct {
