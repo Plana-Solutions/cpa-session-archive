@@ -196,3 +196,56 @@ func TestTurnSearchMigration(t *testing.T) {
 		t.Fatalf("MV insert %v %v", fresh, err)
 	}
 }
+
+func TestTurnSearchDeepPages(t *testing.T) {
+	c := turnSearchFixture(t)
+	statements := turnSearchSchema(t, c)
+	at := time.Now().UTC().Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")
+	rows := []map[string]any{}
+	expected := []string{}
+	for i := 0; i < 180; i++ {
+		text := "yo ordinary"
+		if i%6 == 0 {
+			text = "Generate a title that will help the user recognize this T3 Code thread yo"
+		}
+		id := fmt.Sprintf("page-%03d", i)
+		if i%6 != 0 {
+			expected = append(expected, id)
+		}
+		rows = append(rows, map[string]any{"request_id": id, "conversation_id": id, "started_at": at, "ingested_at": at, "kind": "messages", "input_items": 200, "msg_direction": []string{"input"}, "msg_role": []string{"user"}, "msg_type": []string{"message"}, "msg_text": []string{text}})
+	}
+	chInsert(t, c, "request_facts", rows...)
+	turnSearchActivate(t, c, statements)
+	for _, compact := range []bool{false, true} {
+		c.turnSearchChecked = time.Now()
+		c.turnSearchPresent = compact
+		for offset := 0; offset <= 140; offset += 20 {
+			got, err := c.read("sessions", url.Values{"q": {"yo"}, "limit": {"20"}, "offset": {fmt.Sprint(offset)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			page := got.([]archiveSession)
+			want := expected[offset:min(offset+20, len(expected))]
+			ids := []string{}
+			for _, row := range page {
+				ids = append(ids, row.SessionID)
+			}
+			if fmt.Sprint(ids) != fmt.Sprint(want) {
+				t.Fatalf("compact=%t offset=%d got=%v want=%v", compact, offset, ids, want)
+			}
+		}
+	}
+
+	chExec(t, c, "ALTER TABLE cliproxy.turn_search MODIFY COMMENT 'archive-turn-search-v1-building'")
+	c.turnSearchChecked = time.Now().Add(-31 * time.Second)
+	if present, err := c.turnSearchExists(context.Background()); err != nil || present {
+		t.Fatalf("rollback did not deactivate lookup %t %v", present, err)
+	}
+	for _, sql := range []string{"DROP TABLE cliproxy.turn_search_mv", "DROP VIEW cliproxy.turn_search_source", "DROP TABLE cliproxy.turn_search"} {
+		chExec(t, c, sql)
+	}
+	got, err := c.read("sessions", url.Values{"q": {"yo"}, "offset": {"100"}})
+	if err != nil || len(got.([]archiveSession)) != 20 {
+		t.Fatalf("rollback fallback %v %v", got, err)
+	}
+}

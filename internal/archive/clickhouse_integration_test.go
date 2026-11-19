@@ -37,10 +37,19 @@ func localClickHouse(t *testing.T) *clickhouseReader {
 	httpPort, tcpPort := port(), port()
 	dir := t.TempDir()
 	config := fmt.Sprintf(`<clickhouse><listen_host>127.0.0.1</listen_host><http_port>%d</http_port><tcp_port>%d</tcp_port><path>%s/data/</path><tmp_path>%s/tmp/</tmp_path><max_server_memory_usage>1610612736</max_server_memory_usage><max_thread_pool_size>256</max_thread_pool_size><background_pool_size>4</background_pool_size><background_schedule_pool_size>4</background_schedule_pool_size><background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size><background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size><background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size><merge_tree><number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition><number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge><number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation></merge_tree><query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>100</flush_interval_milliseconds></query_log><logger><level>information</level><console>true</console></logger><users><default><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks><profile>default</profile><quota>default</quota></default></users><profiles><default><max_threads>2</max_threads></default></profiles><quotas><default/></quotas></clickhouse>`, httpPort, tcpPort, dir, dir)
+	if os.Getenv("ARCHIVE_TURN_SEARCH_ACCEPTANCE") != "" || os.Getenv("ARCHIVE_TURN_SEARCH_SYNTHETIC") != "" {
+		start, end := strings.Index(config, "<query_log>"), strings.Index(config, "</query_log>")+len("</query_log>")
+		config = config[:start] + config[end:]
+		config = strings.Replace(config, "<level>information</level>", "<level>warning</level>", 1)
+		config = strings.Replace(config, "<merge_tree>", "<merge_tree><merge_max_block_size>256</merge_max_block_size><max_bytes_to_merge_at_max_space_in_pool>2147483648</max_bytes_to_merge_at_max_space_in_pool>", 1)
+	}
 	if err := os.Mkdir(filepath.Join(dir, "users.d"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	profile := `<clickhouse><profiles><inference_reader><readonly>2</readonly><max_memory_usage>536870912</max_memory_usage><max_execution_time>60</max_execution_time><max_result_bytes>8388608</max_result_bytes><result_overflow_mode>throw</result_overflow_mode><log_queries>1</log_queries></inference_reader></profiles><users><inference_reader><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks><profile>inference_reader</profile><quota>default</quota></inference_reader></users></clickhouse>`
+	if os.Getenv("ARCHIVE_TURN_SEARCH_ACCEPTANCE") != "" || os.Getenv("ARCHIVE_TURN_SEARCH_SYNTHETIC") != "" {
+		profile = strings.Replace(profile, "<log_queries>1</log_queries>", "<log_queries>0</log_queries>", 1)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "users.d", "inference-reader.xml"), []byte(profile), 0600); err != nil {
 		t.Fatal(err)
 	}

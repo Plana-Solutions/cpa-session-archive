@@ -2,8 +2,11 @@
 
 The archive searches `cliproxy.turn_search` when its table comment is
 `archive-turn-search-v1-ready`. Otherwise it uses the existing request-facts
-search. Presence is checked at most once per 30 seconds. The search deadline
-remains three seconds and the default window remains seven days.
+search. Presence is checked at most once per 30 seconds. Candidate verification
+walks 80 conversations at a time by descending activity time and ascending ID.
+The next batch seeks past the previous batch, including timestamp ties. Short
+terms remain supported. Deep pages no longer switch to full-window text
+verification. The search deadline remains three seconds and the default window remains seven days.
 
 The materialized view reads inserts into `request_facts`. It keeps one candidate
 per request with an input user-message tail that could start a turn. It stores
@@ -64,9 +67,30 @@ SETTINGS max_threads=1, max_memory_usage=268435456, max_block_size=256;
 The backfill limits each query to 256 MiB and one thread. This is a query limit,
 not a server RSS guarantee. Live inserts and merges also use memory. Do not run
 other backfills concurrently under the server's approximately 1.5 GB ceiling.
-Local timings estimate the SQL work only. Two-second pauses add about three
-minutes per day of populated history. Production CPU and concurrent ingestion
-can increase that duration.
+On the 8,388-fact live-derived snapshot ending 2026-11-19 at 13:44:04 UTC,
+94 consecutive 15-minute slices wrote 1,926 candidates. Each slice passed the
+zero-missing coverage check. INSERT wall time had a median of 0.017 seconds and
+a range of 0.006 to 0.076 seconds. Peak query memory had a median of 16.3 MB and
+a range of 4.9 to 26.4 MB. SQL inserts took 2.96 seconds in total. Inserts,
+coverage checks, and local disk guards took 5.71 seconds. MB is decimal.
+
+Allow three to five minutes for that approximately one-day history with the
+required two-second pauses, then verify coverage and activate. For longer
+history, pacing alone adds 192 seconds per day. These are planning estimates
+from macOS ClickHouse 26.11.1, not production CPU qualification. The local
+server had a 1.5 GiB absolute memory cap, query logging off, four background
+workers, 256-row merge blocks, and a 2 GiB maximum merge size. Production uses
+a 2 GB container and a 0.75 server memory ratio. Concurrent inserts and merges
+also consume that server budget.
+
+Stop dispatching slices on any query error, nonzero missing count, foreground
+insert failure, or OOM/container restart. Leave the comment building. Halve the
+slice before retrying if its peak exceeds 128 MiB or it hits the 256 MiB limit.
+Read peak memory from the buffered HTTP summary with `wait_end_of_query=1`;
+query logging need not be enabled. Pause if tracked server memory exceeds
+1.2 GB, RSS approaches the 2 GB container limit, or the volume reports low disk
+space. Investigate before resuming. Do not activate until every slice passes.
+Rollback remains available before or after activation.
 
 ## Roll back
 
@@ -94,9 +118,23 @@ when verification ends. The title audit follows **all** result pages for each
 phrase, so short or shared titles do not produce false misses.
 
 `TestTurnSearchSynthetic` is opt-in with `ARCHIVE_TURN_SEARCH_SYNTHETIC=1`. It
-creates 330,000 facts over thirty days. One in twelve rows has a roughly 230-byte
+creates 60,000 facts over thirty days. One in twelve rows has a roughly 230-byte
 user prompt. Other rows have approximately 12 KB of tool output. Five alternating
 runs cover absent, rare, and common terms at seven and thirty days. Every search
-uses the actual archive reader and its deadline. The test also alternates
-1,000-row inserts with and without the MV and records query-log peak memory.
-Both tests delete their disposable server data through Go test cleanup.
+uses the actual archive reader and its deadline.
+
+`TestTurnSearchAcceptance` also alternates five insert passes with and without
+the final MV. Each pass replays the first 512 copied facts in batches capped at
+16 rows and 8 MiB. It verifies fact and candidate counts and records rows per
+second and peak query memory from buffered HTTP summaries. Query logging is
+off. These copied facts omit unrelated columns, including tool arguments, so
+the result qualifies this derived-field workload, not full production insert
+latency or worst-case 8 MiB payloads.
+
+Set `ARCHIVE_TURN_SEARCH_WORK` to the task-owned temporary directory for an
+additional 1.7 GB footprint stop. Both tests stop below 2.5 GB of free disk and
+delete disposable server data through Go test cleanup. Run them serially and
+delete the compressed copy after its measurements.
+
+The [round 9 qualification report](turn-search-benchmark.md) contains the full
+five-run cost matrix, title audit, insert overhead, and measurement limits.

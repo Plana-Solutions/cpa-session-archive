@@ -76,8 +76,7 @@ const searchTextMatch = `arrayExists(x->positionCaseInsensitiveUTF8(replaceRegex
 
 const searchTurnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 
-// Search the most recently active candidates first. Common terms stop at the page;
-// rare terms expand the candidate set. Titles and search share the same cleanup.
+// Walk candidate conversations in activity order without rereading earlier text pages.
 func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, source, filters string, wanted int, showSystem bool) ([]string, error) {
 	present, err := c.turnSearchExists(ctx)
 	if err != nil {
@@ -103,28 +102,27 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		compactFilter = ` AND request_id IN (SELECT request_id FROM (` + candidates + `))`
 		w.params = p
 	}
-	for size := max(80, wanted); ; size *= 8 {
-		if size > 640 {
-			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+searchTurnStart+compactFilter, 1000000, present)
-		}
-
+	const size = 80
+	ids := []string{}
+	seek := ""
+	for {
 		w.params.Set("candidates", strconv.Itoa(size))
 		var candidates []struct {
 			ID string `json:"id"`
 			Lo string `json:"lo"`
 			Hi string `json:"hi"`
 		}
-		err := c.query(ctx, `SELECT conversation_id AS id,toString(min(started_at)) AS lo,toString(addNanoseconds(max(started_at),1)) AS hi FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` AND conversation_id IN (SELECT conversation_id `+source+` WHERE `+filters+` GROUP BY conversation_id) GROUP BY conversation_id ORDER BY max(started_at) DESC,conversation_id LIMIT {candidates:UInt32}`, w.params, &candidates)
+		err := c.query(ctx, `SELECT conversation_id AS id,toString(min(started_at)) AS lo,toString(addNanoseconds(max(started_at),1)) AS hi FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND `+conversationTraffic+` AND conversation_id IN (SELECT conversation_id `+source+` WHERE `+filters+` GROUP BY conversation_id) GROUP BY conversation_id`+seek+` ORDER BY max(started_at) DESC,conversation_id LIMIT {candidates:UInt32}`, w.params, &candidates)
 		if err != nil {
 			return nil, err
 		}
 		if len(candidates) == 0 {
-			return nil, nil
+			return ids, nil
 		}
-		ids := []string{}
+		candidateIDs := []string{}
 		lo, hi := candidates[0].Lo, candidates[0].Hi
 		for _, row := range candidates {
-			ids = append(ids, row.ID)
+			candidateIDs = append(candidateIDs, row.ID)
 			if row.Lo < lo {
 				lo = row.Lo
 			}
@@ -132,7 +130,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 				hi = row.Hi
 			}
 		}
-		encoded, _ := json.Marshal(ids)
+		encoded, _ := json.Marshal(candidateIDs)
 		w.params.Set("candidate_ids", string(encoded))
 
 		// Restrict the primary time key before reading candidate text.
@@ -169,19 +167,23 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 			}
 			matches = visible
 		}
-		if len(matches) >= wanted || len(candidates) < size {
-			found := map[string]bool{}
-			for _, id := range matches {
-				found[id] = true
+		found := map[string]bool{}
+		for _, id := range matches {
+			found[id] = true
+		}
+		for _, row := range candidates {
+			if found[row.ID] {
+				ids = append(ids, row.ID)
 			}
-			ids := []string{}
-			for _, row := range candidates {
-				if found[row.ID] {
-					ids = append(ids, row.ID)
-				}
-			}
+		}
+		if len(ids) >= wanted || len(candidates) < size {
 			return ids[:min(len(ids), wanted)], nil
 		}
+		last := candidates[len(candidates)-1]
+		w.params.Set("candidate_before", last.Hi)
+		w.params.Set("candidate_after_id", last.ID)
+		seek = ` HAVING max(started_at)<subtractNanoseconds({candidate_before:DateTime64(9,'UTC')},1)
+ OR (max(started_at)=subtractNanoseconds({candidate_before:DateTime64(9,'UTC')},1) AND conversation_id>{candidate_after_id:String})`
 	}
 }
 

@@ -457,6 +457,23 @@ func round7DiskGuard(t *testing.T) {
 	if free*1024 < 2500000000 {
 		t.Fatal("stop below 2.5 GB free")
 	}
+	if root := os.Getenv("ARCHIVE_TURN_SEARCH_WORK"); root != "" {
+		out, err := exec.Command("du", "-sk", root).Output()
+		if err != nil {
+			exit, ok := err.(*exec.ExitError)
+			// Merges may remove an old part while du walks it.
+			if !ok || !strings.Contains(string(exit.Stderr), "No such file or directory") {
+				t.Fatalf("footprint check: %v", err)
+			}
+		}
+		var kb uint64
+		if _, err := fmt.Sscan(string(out), &kb); err != nil {
+			t.Fatal(err)
+		}
+		if kb*1024 > 1700000000 {
+			t.Fatal("stop before task footprint exceeds 2 GB")
+		}
+	}
 }
 
 func TestRound7LiveCompactionTitle(t *testing.T) {

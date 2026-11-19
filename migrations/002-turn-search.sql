@@ -61,6 +61,11 @@ FROM (
 -- Backfill. Bind from/to to a small UTC slice and watermark to the captured
 -- ingested_at high-water mark. Limit one query to 256 MiB, one thread, 256 rows
 -- per block. Start at 15 minutes; halve on failure and pause between slices.
+-- Final-MV local 8,388-fact qualification used 94 slices, 0.017s median per
+-- INSERT (0.006-0.076s), 26.4 MB maximum query memory. Plan 3-5 minutes with
+-- two-second pauses for that one-day snapshot, not a production CPU guarantee.
+-- Stop on errors or missing coverage. Halve above 128 MiB peak; see the guide
+-- for server-memory abort signals. Never activate after partial completion.
 -- Retry of a partial INSERT can duplicate candidates, which readers deduplicate.
 INSERT INTO cliproxy.turn_search
 SELECT * FROM cliproxy.turn_search_source

@@ -169,7 +169,20 @@ func turnSearchBackfill(t *testing.T, c *clickhouseReader, statements []string, 
 		for k, v := range map[string]string{"from": lo.Format("2006-01-02 15:04:05.999999999"), "to": hi.Format("2006-01-02 15:04:05.999999999"), "watermark": "2100-01-01 00:00:00"} {
 			sql = strings.ReplaceAll(sql, "{"+k+":DateTime64(9,'UTC')}", "toDateTime64('"+v+"',9,'UTC')")
 		}
-		chExec(t, c, sql)
+		round7DiskGuard(t)
+		measure := turnSearchExec(t, c, sql)
+		t.Logf("SLICE from=%s to=%s seconds=%.6f memory=%d rows=%d bytes=%d written=%d", lo.Format(time.RFC3339), hi.Format(time.RFC3339), measure.seconds, measure.memory, measure.rows, measure.bytes, measure.written)
+		coverage := strings.Replace(sql, "INSERT INTO cliproxy.turn_search\nSELECT * FROM cliproxy.turn_search_source", "SELECT count() AS missing FROM cliproxy.turn_search_source", 1)
+		coverage = strings.Replace(coverage, "SETTINGS max_threads=1", " AND request_id NOT IN (SELECT request_id FROM cliproxy.turn_search) SETTINGS max_threads=1", 1)
+		var result []struct {
+			Missing uint64 `json:"missing"`
+		}
+		if err := c.query(context.Background(), coverage, nil, &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 1 || result[0].Missing != 0 {
+			t.Fatalf("backfill coverage %v", result)
+		}
 	}
 	turnSearchActivate(t, c, statements)
 }
@@ -202,6 +215,7 @@ func turnSearchFindability(t *testing.T, c *clickhouseReader, to time.Time, path
 	pages := map[string]page{}
 	hits, empty, failures, hidden := 0, 0, 0, 0
 	for _, r := range rows {
+		round7DiskGuard(t)
 		if r.System {
 			hidden++
 			continue
@@ -330,9 +344,26 @@ func TestTurnSearchAcceptance(t *testing.T) {
 	start := time.Now()
 	turnSearchBackfill(t, c, statements, to)
 	t.Logf("BACKFILL dataset=live seconds=%.6f", time.Since(start).Seconds())
+	if os.Getenv("ARCHIVE_TURN_SEARCH_PROBE") != "" {
+		for run := 0; run < 5; run++ {
+			start := time.Now()
+			out, err := c.read("sessions", url.Values{"q": {"yo"}, "offset": {"100"}, "to": {to.Format(time.RFC3339Nano)}})
+			n := 0
+			if err == nil {
+				n = len(out.([]archiveSession))
+			}
+			t.Logf("YO run=%d seconds=%.6f matches=%d error=%v", run, time.Since(start).Seconds(), n, err)
+		}
+		return
+	}
 	turnSearchFindability(t, c, to, filepath.Join(evidence, "title-findability.tsv"))
 	turnSearchCosts(t, c, "live", to, []string{"absent-turn-search-8d27e", "regretted the choice", "you"})
 	turnSearchStats(t, c, "live")
+	copyPath := os.Getenv("ARCHIVE_TURN_SEARCH_COPY")
+	if copyPath == "" {
+		copyPath = filepath.Join(evidence, "local-derived.jsonl.gz")
+	}
+	turnSearchInsertCosts(t, c, copyPath)
 }
 func turnSearchStats(t *testing.T, c *clickhouseReader, dataset string) {
 	var stats []map[string]any
@@ -351,9 +382,9 @@ func TestTurnSearchSynthetic(t *testing.T) {
 	statements := turnSearchSchema(t, c)
 	// A compact prompt per twelve requests, with tool output making the mean text 11 KB.
 	insert := `INSERT INTO cliproxy.request_facts (request_id,started_at,ingested_at,conversation_id,kind,client,prior_seen,input_items,last_user_text,msg_direction,msg_role,msg_type,msg_text)
- WITH intDiv(number,12) AS session,number%12 AS step,toDateTime64('2026-11-19 12:00:00',9,'UTC')-toIntervalSecond(intDiv((330000-number)*2592000,330000)) AS ts,concat('Please fix the common archive request ',if(session=27490,'rarelyfoundneedle ',''),repeat(hex(cityHash64(session)),12)) AS prompt
+ WITH intDiv(number,12) AS session,number%12 AS step,toDateTime64('2026-11-19 12:00:00',9,'UTC')-toIntervalSecond(intDiv((60000-number)*2592000,60000)) AS ts,concat('Please fix the common archive request ',if(session=4990,'rarelyfoundneedle ',''),repeat(hex(cityHash64(session)),12)) AS prompt
  SELECT concat('req-',toString(number)),ts,ts,concat('claude:scale-',toString(session)),'messages','claude-code',step>0,200,prompt,['input'],[if(step=0,'user','tool')],['message'],[if(step=0,prompt,repeat(hex(cityHash64(number)),770))] FROM numbers(%d,1000) SETTINGS max_threads=1,max_block_size=256,min_insert_block_size_rows=256,min_insert_block_size_bytes=0`
-	for offset := 0; offset < 330000; offset += 1000 {
+	for offset := 0; offset < 60000; offset += 1000 {
 		round7DiskGuard(t)
 		chExec(t, c, fmt.Sprintf(strings.ReplaceAll(insert, "number%12", "number%%12"), offset))
 		if offset%10000 == 9000 {
@@ -366,28 +397,126 @@ func TestTurnSearchSynthetic(t *testing.T) {
 	to := time.Date(2026, 11, 19, 12, 0, 1, 0, time.UTC)
 	turnSearchCosts(t, c, "synthetic", to, []string{"absent-turn-search-8d27e", "rarelyfoundneedle", "common"})
 	turnSearchStats(t, c, "synthetic")
-	// Insert the same production-shaped block with and without the MV, alternating sides.
-	sql := fmt.Sprintf(strings.ReplaceAll(insert, "number%12", "number%%12"), 330000)
+}
+
+type turnSearchMeasurement struct {
+	seconds                      float64
+	rows, bytes, written, memory uint64
+}
+
+func turnSearchExec(t *testing.T, c *clickhouseReader, sql string) turnSearchMeasurement {
+	t.Helper()
+	start := time.Now()
+	resp, err := c.client.Post(c.config.URL+"/?wait_end_of_query=1&log_queries=0", "text/plain", strings.NewReader(sql))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 || resp.Header.Get("X-ClickHouse-Exception-Code") != "" {
+		t.Fatalf("measurement failed status=%d error=%v body=%s", resp.StatusCode, err, body)
+	}
+	var summary map[string]string
+	if err := json.Unmarshal([]byte(resp.Header.Get("X-ClickHouse-Summary")), &summary); err != nil {
+		t.Fatal(err)
+	}
+	m := turnSearchMeasurement{seconds: time.Since(start).Seconds()}
+	for key, dst := range map[string]*uint64{"read_rows": &m.rows, "read_bytes": &m.bytes, "written_rows": &m.written, "memory_usage": &m.memory} {
+		n, err := strconv.ParseUint(summary[key], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*dst = n
+	}
+	return m
+}
+
+func turnSearchInsertCosts(t *testing.T, c *clickhouseReader, path string) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	d := json.NewDecoder(gz)
+	d.UseNumber()
+	blocks := []string{}
+	block := ""
+	rows := 0
+	const prefix = "INSERT INTO cliproxy.request_facts FORMAT JSONEachRow\n"
+	for i := 0; i < 512; i++ {
+		var row map[string]any
+		if err := d.Decode(&row); err != nil {
+			t.Fatal(err)
+		}
+		row["request_id"] = fmt.Sprintf("insert-measure-%d", i)
+		row["conversation_id"] = fmt.Sprint("measure-", row["conversation_id"])
+		b, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(b)+1 > 8<<20 {
+			t.Fatal("single fact exceeds production byte batch limit")
+		}
+		if rows == 16 || len(block)+len(b)+1 > 8<<20 {
+			blocks = append(blocks, prefix+block)
+			block = ""
+			rows = 0
+		}
+		block += string(b) + "\n"
+		rows++
+	}
+	if rows > 0 {
+		blocks = append(blocks, prefix+block)
+	}
+	maxBytes := 0
+	for _, b := range blocks {
+		maxBytes = max(maxBytes, len(b)-len(prefix))
+	}
+	t.Logf("INSERT_SHAPE source=first-512-live-facts rows=512 batches=%d max_rows=16 max_bytes=%d cap_bytes=%d", len(blocks), maxBytes, 8<<20)
 	for run := 0; run < 5; run++ {
-		for _, withMV := range []bool{false, true} {
-			if !withMV {
-				chExec(t, c, `DETACH TABLE cliproxy.turn_search_mv`)
+		for _, mv := range []bool{false, true} {
+			if mv {
+				chExec(t, c, "ATTACH TABLE cliproxy.turn_search_mv")
 			} else {
-				chExec(t, c, `ATTACH TABLE cliproxy.turn_search_mv`)
+				chExec(t, c, "DETACH TABLE cliproxy.turn_search_mv")
 			}
-			start := time.Now()
-			chExec(t, c, sql)
-			seconds := time.Since(start).Seconds()
-			chExec(t, c, `SYSTEM FLUSH LOGS`)
-			var logs []struct {
-				Memory uint64 `json:"memory"`
-				Rows   uint64 `json:"rows"`
+			var before []struct {
+				N      uint64 `json:"n"`
+				Search uint64 `json:"search"`
 			}
-			err := c.query(context.Background(), `SELECT memory_usage AS memory,written_rows AS rows FROM system.query_log WHERE type='QueryFinish' AND startsWith(query,'INSERT INTO cliproxy.request_facts (request_id,started_at') ORDER BY event_time_microseconds DESC LIMIT 1`, nil, &logs)
-			if err != nil {
+			count := `SELECT (SELECT count() FROM cliproxy.request_facts) AS n,(SELECT count() FROM cliproxy.turn_search) AS search`
+			if err := c.query(context.Background(), count, nil, &before); err != nil {
 				t.Fatal(err)
 			}
-			t.Logf("INSERT run=%d mv=%t rows=1000 seconds=%.6f rows_per_second=%.1f query_log=%+v", run, withMV, seconds, 1000/seconds, logs)
+			round7DiskGuard(t)
+			start := time.Now()
+			peak := uint64(0)
+			written := uint64(0)
+			for _, b := range blocks {
+				m := turnSearchExec(t, c, b)
+				peak = max(peak, m.memory)
+				written += m.written
+			}
+			seconds := time.Since(start).Seconds()
+			var after []struct {
+				N      uint64 `json:"n"`
+				Search uint64 `json:"search"`
+			}
+			if err := c.query(context.Background(), count, nil, &after); err != nil {
+				t.Fatal(err)
+			}
+			added := after[0].N - before[0].N
+			derived := after[0].Search - before[0].Search
+			if added != 512 || (mv && derived == 0) || (!mv && derived != 0) {
+				t.Fatalf("insert work mismatch mv=%t facts=%d derived=%d", mv, added, derived)
+			}
+			t.Logf("INSERT run=%d mv=%t rows=%d derived=%d seconds=%.6f rows_per_second=%.1f memory=%d written=%d", run, mv, added, derived, seconds, 512/seconds, peak, written)
 		}
 	}
 }
