@@ -4,13 +4,17 @@
     {
       "id": "cpa-session-archive",
       "name": "CPA Session Archive (Plana ARM64)",
-      "description": "Plana ARM64 build of the CPA session archive plugin. Requires a separate private collector service.",
+      "description": "Browse sessions, request timelines and fleet insights directly from ClickHouse. Capture is handled by clickhouse-sink.",
       "author": "linonetwo / Plana-Solutions",
-      "version": "0.7.21-plana.3",
+      "version": "0.8.0-plana.1",
       "repository": "https://github.com/Plana-Solutions/cpa-session-archive",
       "homepage": "https://github.com/Plana-Solutions/cpa-session-archive",
       "license": "Apache-2.0",
-      "tags": ["Management", "Archive", "ARM64"]
+      "tags": [
+        "Management",
+        "Archive",
+        "ARM64"
+      ]
     }
   ]
 }

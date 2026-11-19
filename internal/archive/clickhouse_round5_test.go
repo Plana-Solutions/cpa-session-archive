@@ -1,0 +1,440 @@
+package archive
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestClickHouseRound5(t *testing.T) {
+	c := localClickHouse(t)
+	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
+		b, _ := os.ReadFile("testdata/clickhouse/" + file)
+		for _, sql := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
+		}
+	}
+	base := time.Now().UTC().Add(-time.Hour)
+	seed := func(id, session string, n int, status int, input, output string, extra map[string]any) {
+		at := base.Add(time.Duration(n) * time.Second).Format("2006-01-02 15:04:05.999999999")
+		chInsert(t, c, "requests", map[string]any{"request_id": id, "trace_id": "shared-" + session, "started_at": at, "completed_at": at, "request_body": input, "response_body": output})
+		row := map[string]any{"request_id": id, "conversation_id": session, "started_at": at, "ingested_at": at, "kind": "responses", "outcome": "succeeded", "status_code": status, "input_items": 1, "msg_direction": []string{"input", "output"}, "msg_position": []int{0, 0}, "msg_role": []string{"user", "assistant"}, "msg_type": []string{"message", "message"}, "msg_text": []string{"prompt-" + id, "answer-" + id}, "msg_tool_name": []string{"", ""}, "msg_call_id": []string{"", ""}, "msg_arguments": []string{"", ""}, "msg_is_error": []bool{false, false}, "msg_text_hash": []int{0, 0}}
+		for k, v := range extra {
+			row[k] = v
+		}
+		chInsert(t, c, "request_facts", row)
+	}
+	t.Run("latest successful snapshot", func(t *testing.T) {
+		for i, status := range []int{200, 201, 500} {
+			id := fmt.Sprint("sft-", i)
+			seed(id, "sft-session", i, status, `{"input":[{"role":"user","content":"history"},{"role":"assistant","content":"prior answer"},{"role":"user","content":"latest question"}]}`, fmt.Sprintf(`{"output":[{"role":"assistant","content":"latest answer-%d"}]}`, i), nil)
+		}
+		content, _ := collectExport(t, c, url.Values{"id": {"sft-session"}, "format": {"sft"}})
+		if strings.Count(content, "prior answer") != 1 || strings.Contains(content, "answer-sft-") || !strings.Contains(content, "latest answer-1") || strings.Contains(content, "latest answer-2") || strings.Contains(content, "latest answer-0") {
+			t.Fatalf("SFT did not select latest successful snapshot: %s", content)
+		}
+	})
+	t.Run("reasoning excluded", func(t *testing.T) {
+		seed("reasoning", "reason-session", 10, 200, `{}`, `data: stream`, map[string]any{"msg_direction": []string{"input", "output", "output", "output"}, "msg_position": []int{0, 0, 1, 2}, "msg_role": []string{"user", "assistant", "assistant", "assistant"}, "msg_type": []string{"message", "reasoning", "thinking", "message"}, "msg_text": []string{"question", "SECRET-REASONING", "SECRET-THINKING", "answer"}, "msg_tool_name": []string{"", "", "", ""}, "msg_call_id": []string{"", "", "", ""}, "msg_arguments": []string{"", "", "", ""}, "msg_is_error": []bool{false, false, false, false}, "msg_text_hash": []int{0, 0, 0, 0}})
+		content, _ := collectExport(t, c, url.Values{"id": {"reason-session"}, "format": {"sft"}})
+		if strings.Contains(content, "SECRET-") || !strings.Contains(content, "answer") {
+			t.Fatalf("reasoning in SFT: %s", content)
+		}
+	})
+	t.Run("usage attribution shared trace", func(t *testing.T) {
+		for i := 0; i < 2; i++ {
+			id := fmt.Sprint("usage-", i)
+			seed(id, "usage-session", 20+i, 200, `{}`, `{}`, nil)
+			chInsert(t, c, "usage", map[string]any{"request_id": "attempt-" + id, "trace_id": "shared-usage-session", "requested_at": base.Add(time.Duration(20+i) * time.Second).Format("2006-01-02 15:04:05.999999999"), "total_tokens": 10 + i})
+		}
+		w, _ := windowFor(nil, 365)
+		w.params.Set("id", "usage-0")
+		w, _ = c.narrow(context.Background(), w, `request_id={id:String}`)
+		var rows []struct {
+			Tokens int `json:"tokens"`
+		}
+		if err := c.query(context.Background(), `SELECT u.total_tokens AS tokens `+factsWithUsage+` WHERE `+timeFilter+` AND f.request_id={id:String}`, w.params, &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].Tokens != 10 {
+			t.Fatalf("later request inflated tokens: %+v", rows)
+		}
+	})
+	t.Run("stateful and explicit turns", func(t *testing.T) {
+		for _, mode := range []string{"stateful", "explicit"} {
+			for i := 0; i < 3; i++ {
+				extra := map[string]any{"prior_seen": i > 0, "reply_text": fmt.Sprint("reply-", i)}
+				if mode == "stateful" {
+					extra["previous_response_id"] = "previous"
+				} else {
+					extra["turn_id"] = fmt.Sprint("turn-", i)
+					extra["input_items"] = 2
+					extra["system_prompt_hash"] = i + 1
+					extra["msg_direction"] = []string{"input", "input"}
+					extra["msg_role"] = []string{"system", "user"}
+					extra["msg_type"] = []string{"message", "message"}
+					extra["msg_text"] = []string{"instructions", fmt.Sprint("prompt-", i)}
+				}
+				seed(fmt.Sprint(mode, i), mode, 30+i, 200, `{}`, `{}`, extra)
+			}
+			got, err := c.read("turns", url.Values{"session_id": {mode}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(got)
+			var page struct{ Total int }
+			json.Unmarshal(b, &page)
+			if page.Total != 3 {
+				t.Fatalf("%s followups merged: %s", mode, b)
+			}
+		}
+	})
+	t.Run("shortened request entries", func(t *testing.T) {
+		seed("truncated", "long-session", 40, 200, `{}`, `{}`, map[string]any{"msg_text": []string{strings.Repeat("界", 5000), ""}, "msg_role": []string{"user", "assistant"}, "msg_type": []string{"message", "function_call"}, "msg_tool_name": []string{"", "shell"}, "msg_arguments": []string{"", strings.Repeat("a", 5000)}})
+		got, err := c.read("request-view", url.Values{"id": {"truncated"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries := got.(RequestTimelineView).Entries
+		if len(entries) != 2 || !entries[0].Truncated || !entries[1].Truncated {
+			for _, e := range entries {
+				t.Logf("role=%s len=%d truncated=%t", e.Role, len(e.Text), e.Truncated)
+			}
+			t.Fatal("shortened text or tool arguments missing truncation flag")
+		}
+	})
+	t.Run("native event projection", func(t *testing.T) {
+		at := base.Format("2006-01-02 15:04:05.999999999")
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "native-r5", "native_session_id": "source-id", "source": "codex", "project": "project", "title": "title", "ts": at, "position": 1, "role": "tool", "type": "tool_result", "tool_name": "shell", "text": "result"})
+		content, _ := collectExport(t, c, url.Values{"id": {"external:native-r5"}, "format": {"archive"}})
+		var record struct {
+			Original []byte    `json:"original_request"`
+			Started  time.Time `json:"started_at"`
+		}
+		if err := json.Unmarshal([]byte(content), &record); err != nil {
+			t.Fatal(err)
+		}
+		var event externalMessage
+		json.Unmarshal(record.Original, &event)
+		if event.Type != "tool_result" || event.ToolName != "shell" || event.Source != "codex" || event.NativeSessionID != "source-id" || !event.TS.Equal(base) || !record.Started.Equal(base) {
+			t.Fatalf("lost native metadata: event=%+v started=%v body=%s", event, record.Started, base64.StdEncoding.EncodeToString(record.Original))
+		}
+	})
+	t.Run("search uses cleaned titles in both paths", func(t *testing.T) {
+		seed("search", "search-session", 50, 200, `{}`, `{}`, map[string]any{"last_user_text": "<system-reminder>injected preamble</system-reminder>", "msg_direction": []string{"input", "input"}, "msg_role": []string{"user", "user"}, "msg_type": []string{"message", "message"}, "msg_text": []string{"<system-reminder>context</system-reminder>Find genuine needle", "<system-reminder>injected preamble</system-reminder>"}})
+		for _, limit := range []string{"20", "641"} {
+			got, err := c.read("sessions", url.Values{"q": {"Find genuine needle"}, "limit": {limit}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.([]archiveSession)) != 1 {
+				t.Fatalf("displayed title missing from search limit=%s", limit)
+			}
+		}
+	})
+	t.Run("search full prompt middle", func(t *testing.T) {
+		seed("middle", "middle-session", 60, 200, `{}`, `{}`, map[string]any{"msg_text": []string{strings.Repeat("a", 5000) + "unique-middle-needle" + strings.Repeat("b", 110000), "answer"}})
+		for _, limit := range []string{"20", "641"} {
+			got, err := c.read("sessions", url.Values{"q": {"unique-middle-needle"}, "limit": {limit}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.([]archiveSession)) != 1 {
+				t.Fatal("complete prompt middle missing from search")
+			}
+		}
+	})
+	t.Run("skip unusable training snapshot", func(t *testing.T) {
+		extra := map[string]any{}
+		for _, field := range []string{"msg_direction", "msg_position", "msg_role", "msg_type", "msg_text", "msg_tool_name", "msg_call_id", "msg_arguments", "msg_is_error", "msg_text_hash"} {
+			extra[field] = []any{}
+		}
+		seed("empty-training", "empty-training", 70, 200, `{}`, `{}`, extra)
+		content, _ := collectExport(t, c, url.Values{"id": {"empty-training"}, "format": {"sft"}})
+		if strings.TrimSpace(content) != "" {
+			t.Fatalf("unusable training example emitted: %s", content)
+		}
+
+		for _, field := range []string{"msg_direction", "msg_role", "msg_type", "msg_text", "msg_tool_name", "msg_call_id", "msg_arguments"} {
+			extra[field] = []string{""}
+		}
+		extra["msg_direction"] = []string{"input"}
+		extra["msg_role"] = []string{"user"}
+		extra["msg_type"] = []string{"message"}
+		extra["msg_text"] = []string{"question"}
+		extra["msg_position"] = []int{0}
+		extra["msg_is_error"] = []bool{false}
+		extra["msg_text_hash"] = []int{0}
+		seed("user-only-training", "user-only-training", 71, 200, `{"input":[{"role":"user","content":"question"}]}`, `{}`, extra)
+		content, _ = collectExport(t, c, url.Values{"id": {"user-only-training"}, "format": {"sft"}})
+		if strings.TrimSpace(content) != "" {
+			t.Fatalf("training example without assistant emitted: %s", content)
+		}
+	})
+
+	t.Run("full contextual tool result", func(t *testing.T) {
+		seed("context-call", "context-long", 80, 200, `{}`, `{}`, nil)
+		full := strings.Repeat("result", 14000) + "END-OF-CONTEXT"
+		seed("context-result", "context-long", 81, 200, `{}`, `{}`, map[string]any{"msg_role": []string{"tool", "assistant"}, "msg_type": []string{"function_call_output", "message"}, "msg_call_id": []string{"long-call", ""}, "msg_text": []string{full, "answer"}})
+		got, err := c.read("request-context", url.Values{"id": {"context-call"}, "call_id": {"long-call"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		records := got.([]Record)
+		if len(records) != 1 {
+			t.Fatal("missing contextual tool result")
+		}
+		var body struct {
+			Output []struct {
+				Output string `json:"output"`
+			}
+		}
+		json.Unmarshal(records[0].Response, &body)
+		if len(body.Output) != 1 || body.Output[0].Output != full {
+			t.Fatal("contextual tool result was shortened")
+		}
+	})
+
+	t.Run("large native export uses bounded reads", func(t *testing.T) {
+		text := strings.Repeat("x", 9<<20) + "END-OF-NATIVE-EVENT"
+		at := base.Format("2006-01-02 15:04:05.999999999")
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "large-native", "ts": at, "position": 0, "role": "user", "type": "message", "text": "question"}, map[string]any{"session_id": "large-native", "ts": at, "position": 1, "role": "assistant", "type": "message", "text": text})
+		event := externalMessage{SessionID: "large-native", TS: base, Position: 1, Role: "assistant", Type: "message", Text: text}
+		body, _ := json.Marshal(event)
+		archive, _ := json.Marshal(map[string]any{"request_id": "external:large-native:1", "session_id": "external:large-native", "source_format": "external-native-event", "started_at": base, "completed_at": base, "original_request": body, "response": []byte{}})
+		message, _ := json.Marshal(map[string]string{"role": "assistant", "content": text})
+		for format, expected := range map[string]string{"archive": string(archive), "sft": "," + string(message)} {
+			q := url.Values{"id": {"external:large-native"}, "format": {format}, "offset": {"1"}}
+			got, err := c.read("export", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(expected, got.(map[string]any)["content"].(string)) {
+				t.Fatal("native first chunk differs")
+			}
+			q.Set("byte_offset", fmt.Sprint(len(expected)-256))
+			got, err = c.read("export", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			suffix := expected[len(expected)-256:]
+			if format == "archive" {
+				suffix += "\n"
+			}
+			if got.(map[string]any)["content"] != suffix {
+				t.Fatal("native final chunk differs")
+			}
+		}
+		t.Run("native turn preview", func(t *testing.T) {
+			got, err := c.read("turns", url.Values{"session_id": {"external:large-native"}, "turn_id": {"0"}, "limit": {"1000"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(map[string]any)["limit"] != 160 {
+				t.Fatal("native detail page is not bounded")
+			}
+			final := got.(map[string]any)["turn"].(clickhouseTurn)
+			if !final.FinalTruncated || final.FinalRequest != "external:large-native:1" || len([]rune(final.FinalText)) != 12000 {
+				t.Fatal("native final answer lost its full-event target")
+			}
+			records := got.(map[string]any)["records"].([]RequestTimelineView)
+			if len(records) != 2 || !records[1].Entries[0].Truncated || len([]rune(records[1].Entries[0].Text)) > 4000 {
+				t.Fatal("native turn did not return a bounded flagged preview")
+			}
+		})
+		t.Run("native request preview", func(t *testing.T) {
+			got, err := c.read("request-view", url.Values{"id": {"external:large-native:1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := got.(RequestTimelineView).Entries[0]
+			if !entry.Truncated || len([]rune(entry.Text)) > 4000 {
+				t.Fatal("native request did not return a bounded flagged preview")
+			}
+		})
+		t.Run("native complete diagnostics", func(t *testing.T) {
+			got, err := c.read("requests", url.Values{"id": {"external:large-native:1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored externalMessage
+			json.Unmarshal(got.(Record).OriginalRequest, &stored)
+			if stored.Text != text {
+				t.Fatal("native diagnostics lost full text")
+			}
+		})
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "large-native", "ts": at, "position": 2, "role": "user", "type": "message", "text": text})
+		t.Run("native complete turn text", func(t *testing.T) {
+			got, err := c.read("turn-text", url.Values{"session_id": {"external:large-native"}, "turn_id": {"2"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(map[string]string)["text"] != text {
+				t.Fatal("native user text lost content")
+			}
+		})
+
+		t.Run("proxy complete turn text", func(t *testing.T) {
+			seed("large-proxy-turn", "large-proxy-turn", 90, 200, `{}`, `{}`, map[string]any{"msg_text": []string{text, "answer"}})
+			got, err := c.read("turn-text", url.Values{"session_id": {"large-proxy-turn"}, "turn_id": {"large-proxy-turn"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.(map[string]string)["text"] != text {
+				t.Fatal("proxy user text lost content")
+			}
+		})
+
+	})
+
+	t.Run("bounded final answer source", func(t *testing.T) {
+		reply := strings.Repeat("answer", 4000) + "COMPLETE-FINAL-ANSWER"
+		output, _ := json.Marshal(map[string]any{"output": []map[string]string{{"role": "assistant", "content": reply}}})
+		seed("final-source", "final-session", 100, 200, `{"input":[{"role":"user","content":"question"}]}`, string(output), map[string]any{"reply_text": reply, "msg_text": []string{"question", reply}})
+		for _, q := range []url.Values{{"session_id": {"final-session"}}, {"session_id": {"final-session"}, "turn_id": {"final-source"}}} {
+			got, err := c.read("turns", q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(got)
+			var page struct {
+				Turns []struct {
+					FinalText string `json:"final_text"`
+					Truncated bool   `json:"final_truncated"`
+					Request   string `json:"final_request"`
+				}
+				Turn struct {
+					FinalText string `json:"final_text"`
+					Truncated bool   `json:"final_truncated"`
+					Request   string `json:"final_request"`
+				}
+			}
+			json.Unmarshal(b, &page)
+			answer := page.Turn
+			if len(page.Turns) > 0 {
+				answer = page.Turns[0]
+			}
+			if !answer.Truncated || answer.Request != "final-source" || len([]rune(answer.FinalText)) != 12000 {
+				t.Fatal("bounded final answer lacks a full-response target")
+			}
+		}
+		raw, err := c.read("requests", url.Values{"id": {"final-source"}})
+		if err != nil || !strings.Contains(string(raw.(Record).Response), "COMPLETE-FINAL-ANSWER") {
+			t.Fatal("final response diagnostics lost the remainder", err)
+		}
+
+	})
+
+}
+
+func TestTrainingSkipsThinkingBlocks(t *testing.T) {
+	example, _ := trainingExample(Record{OriginalRequest: []byte(`{"input":[{"role":"user","content":"question"},{"role":"assistant","content":[{"type":"thinking","text":"PRIVATE"},{"type":"reasoning","text":"PRIVATE"},{"type":"text","text":"answer"}]}]}`)})
+	b, _ := json.Marshal(example)
+	if strings.Contains(string(b), "PRIVATE") || !strings.Contains(string(b), "answer") {
+		t.Fatalf("nonconversational content in SFT: %s", b)
+	}
+}
+
+type readRequestBudget struct{ n, limit int }
+
+func (s *readRequestBudget) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.n++
+	if s.n > s.limit {
+		return nil, fmt.Errorf("read exceeded %d HTTP requests", s.limit)
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func TestClickHouseSearchRequestBudget(t *testing.T) {
+	c := localClickHouse(t)
+	for _, file := range []string{"schema.sql", "derived.sql"} {
+		b, _ := os.ReadFile("testdata/clickhouse/" + file)
+		for _, sql := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
+		}
+	}
+	chExec(t, c, `INSERT INTO cliproxy.request_facts (request_id,conversation_id,started_at,ingested_at,msg_direction,msg_role,msg_type,msg_text) SELECT concat('search-',toString(number)),concat('conversation-',toString(number)),now64(9)-INTERVAL 1 HOUR+toIntervalNanosecond(intDiv(number,10)),now64(9),['input'],['user'],['message'],[if(number=0,'late-only-needle','ordinary short prompt')] FROM numbers(20000)`)
+	budget := &readRequestBudget{limit: 100}
+	c.client.Transport = budget
+	got, err := c.read("sessions", url.Values{"q": {"absent-needle"}})
+	if err != nil {
+		t.Fatalf("bounded absent search failed after %d requests: %v", budget.n, err)
+	}
+	if len(got.([]archiveSession)) != 0 {
+		t.Fatal("absent term returned a match")
+	}
+	t.Logf("20000 turn starts, absent result, HTTP requests=%d", budget.n)
+
+	budget.n = 0
+	got, err = c.read("sessions", url.Values{"q": {"late-only-needle"}})
+	if err != nil {
+		t.Fatalf("late match search failed after %d requests: %v", budget.n, err)
+	}
+	matches := got.([]archiveSession)
+	if len(matches) != 1 || matches[0].SessionID != "conversation-0" {
+		t.Fatal("seek pagination missed the final turn start")
+	}
+	t.Logf("20000 turn starts, final-row match, HTTP requests=%d", budget.n)
+}
+
+func TestClickHouseExportReadBudget(t *testing.T) {
+	c := localClickHouse(t)
+	for _, file := range []string{"schema.sql", "derived.sql", "external.sql"} {
+		b, _ := os.ReadFile("testdata/clickhouse/" + file)
+		for _, sql := range strings.Split(string(b), "\n;\n") {
+			chExec(t, c, strings.ReplaceAll(sql, "{db}", "cliproxy"))
+		}
+	}
+	at := time.Now().UTC().Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")
+	native := strings.Repeat("x", 9<<20) + "NATIVE-END"
+	proxy := strings.Repeat("p", 2<<20) + "PROXY-END"
+	chInsert(t, c, "external_messages", map[string]any{"session_id": "cache-native", "ts": at, "position": 0, "role": "user", "type": "message", "text": "question"}, map[string]any{"session_id": "cache-native", "ts": at, "position": 1, "role": "assistant", "type": "message", "text": native})
+	body, _ := json.Marshal(map[string]any{"input": []map[string]string{{"role": "user", "content": proxy}}})
+	chInsert(t, c, "requests", map[string]any{"request_id": "cache-proxy", "started_at": at, "completed_at": at, "request_body": string(body), "response_body": `{"output":[{"role":"assistant","content":"done"}]}`})
+	chInsert(t, c, "request_facts", map[string]any{"request_id": "cache-proxy", "conversation_id": "cache-proxy", "started_at": at, "ingested_at": at, "kind": "responses", "outcome": "succeeded", "status_code": 200, "input_items": 1, "msg_direction": []string{"input", "output"}, "msg_position": []int{0, 0}, "msg_role": []string{"user", "assistant"}, "msg_type": []string{"message", "message"}, "msg_text": []string{"question", "done"}, "msg_tool_name": []string{"", ""}, "msg_call_id": []string{"", ""}, "msg_arguments": []string{"", ""}, "msg_is_error": []bool{false, false}, "msg_text_hash": []int{0, 0}})
+	for _, source := range []struct {
+		id    string
+		limit int
+		tail  string
+	}{{"external:cache-native", 200, "NATIVE-END"}, {"cache-proxy", 80, "PROXY-END"}} {
+		for _, format := range []string{"archive", "sft"} {
+			t.Run(source.id+"/"+format, func(t *testing.T) {
+				budget := &readRequestBudget{limit: source.limit}
+				t.Cleanup(func() { t.Logf("HTTP requests=%d budget=%d", budget.n, source.limit) })
+				c.client.Transport = budget
+				content, pages := collectExport(t, c, url.Values{"id": {source.id}, "format": {format}})
+				if len(content) < 1<<20 {
+					t.Fatal("large export did not complete")
+				}
+				if format == "sft" && !strings.Contains(content, source.tail) {
+					t.Fatal("SFT export lost its tail")
+				}
+				t.Logf("complete export pages=%d HTTP requests=%d", pages, budget.n)
+			})
+		}
+	}
+	t.Run("native replacement invalidates serialized record", func(t *testing.T) {
+		c.client.Transport = http.DefaultTransport
+		row := map[string]any{"session_id": "cache-version", "ts": at, "ingested_at": at, "position": 1, "role": "assistant", "type": "message", "text": "original version"}
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "cache-version", "ts": at, "position": 0, "role": "user", "type": "message", "text": "question"}, row)
+		q := url.Values{"offset": {"1"}, "id": {"external:cache-version"}, "format": {"sft"}, "from": {time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano)}, "to": {time.Now().UTC().Format(time.RFC3339Nano)}}
+		got, err := c.read("export", q)
+		if err != nil || !strings.Contains(fmt.Sprint(got), "original version") {
+			t.Fatalf("original projection missing: %v", err)
+		}
+		row["ingested_at"] = time.Now().UTC().Format("2006-01-02 15:04:05.999999999")
+		row["text"] = "replacement version"
+		chInsert(t, c, "external_messages", row)
+		got, err = c.read("export", q)
+		if err != nil || !strings.Contains(fmt.Sprint(got), "replacement version") || strings.Contains(fmt.Sprint(got), "original version") {
+			t.Fatalf("replacement returned stale cached projection: %v", err)
+		}
+	})
+}

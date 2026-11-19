@@ -11,7 +11,7 @@ permissions:
 jobs:
   binaries:
     runs-on: depot-ubuntu-24.04-arm-4
-    container: golang:1.24-bookworm
+    container: golang:1.26-bookworm
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.7.21-plana.1"; fi
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version="0.8.0-plana.1"; fi
           (
             cd dist
             zip -X "cpa-session-archive_${version}_linux_arm64.zip" cpa-session-archive.so
