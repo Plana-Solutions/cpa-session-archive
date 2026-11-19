@@ -146,9 +146,11 @@ func readIDsOnce(ctx context.Context, db *sql.DB, q string, args ...any) ([]item
 	out := []item{}
 	for rows.Next() {
 		var x item
-		if err = rows.Scan(&x.ID, &x.RequestID, &x.StartedAt); err != nil {
+		var started sql.NullString
+		if err = rows.Scan(&x.ID, &x.RequestID, &started); err != nil {
 			return nil, err
 		}
+		x.StartedAt = started.String
 		out = append(out, x)
 	}
 	return out, rows.Err()

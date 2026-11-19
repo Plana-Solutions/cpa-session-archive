@@ -49,7 +49,7 @@ func readArchive(ctx context.Context, db *sql.DB, id string) (archive.Record, er
 	var a archive.Record
 	var started, done, meta, facets, original, response string
 	var oldO, oldR []byte
-	err := db.QueryRowContext(ctx, `SELECT request_id,coalesce(trace_id,''),session_id,coalesce(key_id,''),coalesce(source_format,''),coalesce(model,''),coalesce(requested_model,''),stream,coalesce(outcome,''),status_code,coalesce(error,''),started_at,completed_at,truncated,coalesce(metadata_json,''),coalesce(facets_json,''),coalesce(original_ref,''),coalesce(response_ref,''),original_request_gz,response_gz FROM records WHERE request_id=?`, id).Scan(&a.RequestID, &a.TraceID, &a.SessionID, &a.KeyID, &a.SourceFormat, &a.Model, &a.RequestedModel, &a.Stream, &a.Outcome, &a.StatusCode, &a.Error, &started, &done, &a.Truncated, &meta, &facets, &original, &response, &oldO, &oldR)
+	err := db.QueryRowContext(ctx, `SELECT request_id,coalesce(trace_id,''),session_id,coalesce(key_id,''),coalesce(source_format,''),coalesce(model,''),coalesce(requested_model,''),stream,coalesce(outcome,''),status_code,coalesce(error,''),coalesce(started_at,''),coalesce(completed_at,''),truncated,coalesce(metadata_json,''),coalesce(facets_json,''),coalesce(original_ref,''),coalesce(response_ref,''),original_request_gz,response_gz FROM records WHERE request_id=?`, id).Scan(&a.RequestID, &a.TraceID, &a.SessionID, &a.KeyID, &a.SourceFormat, &a.Model, &a.RequestedModel, &a.Stream, &a.Outcome, &a.StatusCode, &a.Error, &started, &done, &a.Truncated, &meta, &facets, &original, &response, &oldO, &oldR)
 	if err != nil {
 		return a, err
 	}
@@ -89,6 +89,9 @@ func readArchive(ctx context.Context, db *sql.DB, id string) (archive.Record, er
 			return nil, err
 		}
 		if codec == "gzip" {
+			if len(data) == 0 {
+				return nil, dataError("corrupt gzip")
+			}
 			data, err = inflate(data)
 		} else if codec != "" && codec != "raw" {
 			return nil, dataError("unknown blob codec")

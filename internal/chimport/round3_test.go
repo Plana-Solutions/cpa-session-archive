@@ -92,7 +92,12 @@ func TestSourceCorruptionAndFatalErrors(t *testing.T) {
 	if !quarantinable(sql.ErrNoRows) {
 		t.Fatal("missing blob must quarantine")
 	}
-	s.DB.Exec("UPDATE records SET metadata_json='{' WHERE request_id=?", a.RequestID)
+	s.DB.Exec("UPDATE records SET started_at=NULL WHERE request_id=?", a.RequestID)
+	_, err = readArchive(context.Background(), s.DB, a.RequestID)
+	if !quarantinable(err) {
+		t.Fatal("NULL timestamp must quarantine", err)
+	}
+	s.DB.Exec("UPDATE records SET started_at=?,metadata_json='{' WHERE request_id=?", a.StartedAt.Format("2006-01-02T15:04:05.999999999Z07:00"), a.RequestID)
 	_, err = readArchive(context.Background(), s.DB, a.RequestID)
 	if !quarantinable(err) {
 		t.Fatal("JSON not quarantinable")
@@ -257,5 +262,22 @@ func TestVerifySampleRejectsEmptyDestination(t *testing.T) {
 	err = VerifySample(context.Background(), Options{URL: server.URL, SQLite: path, State: state, Config: cfg, AuthDir: dir}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "requests missing") {
 		t.Fatal("empty sample accepted", err)
+	}
+}
+
+func TestEmptyGzipBlobIsCorrupt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.sqlite")
+	s, err := archive.OpenStore(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	a := fixture(t)
+	s.PutBatch([]archive.Record{a})
+	s.DB.Exec("INSERT INTO blobs(hash,raw_size,codec,data) VALUES('empty-broken',0,'gzip',X'')")
+	s.DB.Exec("UPDATE records SET original_ref='empty-broken' WHERE request_id=?", a.RequestID)
+	_, err = readArchive(context.Background(), s.DB, a.RequestID)
+	if !quarantinable(err) || err.Error() != "corrupt gzip" {
+		t.Fatal("empty compressed blob imported", err)
 	}
 }
