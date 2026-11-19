@@ -27,16 +27,19 @@ func badQuery(message string) error       { return &archiveReadError{400, messag
 var archiveNotFound = &archiveReadError{404, "not found"}
 
 type clickhouseReader struct {
-	config          pluginConfig
-	client          *http.Client
-	searchesMu      sync.Mutex
-	searches        map[string]*activeSearch
-	externalMu      sync.Mutex
-	externalChecked time.Time
-	externalPresent bool
-	slots           chan struct{}
-	exportMu        sync.Mutex
-	exportCache     *exportCacheEntry
+	config            pluginConfig
+	client            *http.Client
+	searchesMu        sync.Mutex
+	searches          map[string]*activeSearch
+	externalMu        sync.Mutex
+	externalChecked   time.Time
+	externalPresent   bool
+	turnSearchMu      sync.Mutex
+	turnSearchChecked time.Time
+	turnSearchPresent bool
+	slots             chan struct{}
+	exportMu          sync.Mutex
+	exportCache       *exportCacheEntry
 }
 type activeSearch struct{ cancel context.CancelFunc }
 
@@ -341,7 +344,7 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 	}
 	if q.Get("q") != "" {
 		w.params.Set("search", strings.Join(strings.Fields(q.Get("q")), " "))
-		ids, err := c.searchSessions(ctx, w, source, filters, pageMatches(w.params))
+		ids, err := c.searchSessions(ctx, w, source, filters, pageMatches(w.params), q.Get("show_system") == "1")
 		if err != nil {
 			return nil, err
 		}

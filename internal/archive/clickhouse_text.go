@@ -78,10 +78,34 @@ const searchTurnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + t
 
 // Search the most recently active candidates first. Common terms stop at the page;
 // rare terms expand the candidate set. Titles and search share the same cleanup.
-func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, source, filters string, wanted int) ([]string, error) {
+func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, source, filters string, wanted int, showSystem bool) ([]string, error) {
+	present, err := c.turnSearchExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	compactFilter := ""
+	if present {
+		p := cloneValues(w.params)
+		p.Set("search_pattern", "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(p.Get("search")))+"%")
+		lookup := ` FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND text LIKE {search_pattern:String}
+ UNION ALL SELECT request_id,conversation_id FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND (overflow OR (startsWith({search:String},'/') AND has_command))`
+		candidates := `SELECT DISTINCT request_id,conversation_id FROM (SELECT request_id,conversation_id` + lookup + `)`
+		var matches []struct {
+			RequestID string `json:"request_id"`
+		}
+		if err := c.query(ctx, candidates+` LIMIT 1`, p, &matches); err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			return nil, nil
+		}
+		filters += ` AND conversation_id IN (SELECT conversation_id FROM (` + candidates + `))`
+		compactFilter = ` AND request_id IN (SELECT request_id FROM (` + candidates + `))`
+		w.params = p
+	}
 	for size := max(80, wanted); ; size *= 8 {
 		if size > 640 {
-			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+searchTurnStart, 1000000)
+			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+searchTurnStart+compactFilter, 1000000, present)
 		}
 
 		w.params.Set("candidates", strconv.Itoa(size))
@@ -114,9 +138,36 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		// Restrict the primary time key before reading candidate text.
 		w.params.Set("search_from", lo)
 		w.params.Set("search_to", hi)
-		matches, err := c.matchingConversations(ctx, w, `started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+searchTurnStart, size)
+		startRule := searchTurnStart
+		if present {
+			// The earliest hash is only needed for conversations on this candidate page.
+			startRule = strings.Replace(startRule, " GROUP BY conversation_id", ` AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) GROUP BY conversation_id`, 1)
+		}
+		matches, err := c.matchingConversations(ctx, w, `started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+startRule+compactFilter, size, present)
 		if err != nil {
 			return nil, err
+		}
+		if !showSystem && len(matches) > 0 {
+			encoded, _ := json.Marshal(matches)
+			w.params.Set("system_candidate_ids", string(encoded))
+			var hidden []struct {
+				ID string `json:"id"`
+			}
+			err := c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND conversation_id IN (SELECT arrayJoin(JSONExtract({system_candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` GROUP BY conversation_id HAVING max(`+systemSession+`)`, w.params, &hidden)
+			if err != nil {
+				return nil, err
+			}
+			excluded := map[string]bool{}
+			for _, row := range hidden {
+				excluded[row.ID] = true
+			}
+			visible := []string{}
+			for _, id := range matches {
+				if !excluded[id] {
+					visible = append(visible, id)
+				}
+			}
+			matches = visible
 		}
 		if len(matches) >= wanted || len(candidates) < size {
 			found := map[string]bool{}
@@ -134,7 +185,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 	}
 }
 
-func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWindow, where string, wanted int) ([]string, error) {
+func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWindow, where string, wanted int, compact bool) ([]string, error) {
 	found := map[string]bool{}
 	ids := []string{}
 	p := cloneValues(w.params)
@@ -146,7 +197,12 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 			StartedAt time.Time `json:"started_at"`
 			Bytes     uint64    `json:"bytes"`
 		}
-		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,length(toJSONString(`+userTextItems+`)) AS bytes FROM {db:Identifier}.request_facts PREWHERE `+where+seek+` AND `+searchTextMatch+` ORDER BY started_at DESC,request_id DESC LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &rows)
+		textItems, table, predicate := userTextItems, "request_facts", where+seek+` AND `+searchTextMatch
+		if compact {
+			textItems, table = "texts", "turn_search"
+			predicate = timeFilter + seek + ` AND request_id IN (SELECT request_id FROM {db:Identifier}.request_facts PREWHERE ` + where + `)`
+		}
+		err := c.query(ctx, `SELECT conversation_id AS id,request_id,started_at,length(toJSONString(`+textItems+`)) AS bytes FROM {db:Identifier}.`+table+` PREWHERE `+predicate+` ORDER BY started_at DESC,request_id DESC LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &rows)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +227,7 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 			encoded, _ := json.Marshal(keys)
 			p.Set("text_ids", string(encoded))
 			var values []displayText
-			err = c.query(ctx, `SELECT request_id,`+userTextItems+` AS texts FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND request_id IN (SELECT arrayJoin(JSONExtract({text_ids:String},'Array(String)'))) LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &values)
+			err = c.query(ctx, `SELECT request_id,`+textItems+` AS texts FROM {db:Identifier}.`+table+` PREWHERE `+timeFilter+` AND request_id IN (SELECT arrayJoin(JSONExtract({text_ids:String},'Array(String)'))) LIMIT 512 SETTINGS max_threads=1,max_block_size=8`, p, &values)
 			if err != nil {
 				return nil, err
 			}
@@ -186,7 +242,7 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 				full.Set("from", row.StartedAt.Format("2006-01-02 15:04:05.999999999"))
 				full.Set("to", row.StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
 				full.Set("id", row.RequestID)
-				data, err := c.rawBytes(ctx, readWindow{params: full}, "toJSONString("+userTextItems+")", ` FROM {db:Identifier}.request_facts WHERE `+timeFilter+` AND request_id={id:String}`)
+				data, err := c.rawBytes(ctx, readWindow{params: full}, "toJSONString("+textItems+")", ` FROM {db:Identifier}.`+table+` WHERE `+timeFilter+` AND request_id={id:String}`)
 				if err != nil {
 					return nil, err
 				}
@@ -210,4 +266,21 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 		scanned += batch
 	}
 	return ids, nil
+}
+
+func (c *clickhouseReader) turnSearchExists(ctx context.Context) (bool, error) {
+	c.turnSearchMu.Lock()
+	defer c.turnSearchMu.Unlock()
+	if time.Since(c.turnSearchChecked) < 30*time.Second {
+		return c.turnSearchPresent, nil
+	}
+	var rows []struct {
+		Present uint64 `json:"present"`
+	}
+	err := c.query(ctx, `SELECT count() AS present FROM system.tables WHERE database={database:String} AND name='turn_search' AND comment='archive-turn-search-v1-ready'`, url.Values{"database": {c.config.Database}}, &rows)
+	if err == nil {
+		c.turnSearchChecked = time.Now()
+		c.turnSearchPresent = len(rows) > 0 && rows[0].Present > 0
+	}
+	return c.turnSearchPresent, err
 }
