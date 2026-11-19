@@ -138,12 +138,12 @@ func TestTurnSearchMigration(t *testing.T) {
 	for _, r := range covered {
 		ids[r.ID] = true
 	}
-	for _, id := range []string{"first", "followup", "side", "first-tools", "clean-7"} {
+	for _, id := range []string{"first", "followup", "side", "first-tools", "tool-user", "clean-7"} {
 		if !ids[id] {
 			t.Errorf("missing candidate %s", id)
 		}
 	}
-	for _, id := range []string{"tool", "tool-user", "count"} {
+	for _, id := range []string{"tool", "count"} {
 		if ids[id] {
 			t.Errorf("non-turn candidate %s", id)
 		}

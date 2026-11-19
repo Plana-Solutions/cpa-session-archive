@@ -2607,7 +2607,7 @@
                 entry.role || "assistant",
                 entry.text,
                 entry.label || "",
-              ),
+              ) + renderTruncation(entry, view.request_id),
             );
         });
         var toolHTML = toolOrder

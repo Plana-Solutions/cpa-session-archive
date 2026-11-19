@@ -38,7 +38,7 @@ const userTextItems = `arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' 
 const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),arrayMap(x->` + displayPreambleSQL + `,` + userTextItems + `)) AS texts`
 
 // Remove wrappers before truncation so a long injected policy cannot hide the prompt.
-const displayPolicyPattern = `'(?is)^\\s*(?:<current_datetime>.*?(?:</current_datetime>\\s*|$)|<system>.*?(?:</system>\\s*|$)|<developer>.*?(?:</developer>\\s*|$))+'`
+const displayPolicyPattern = `'(?is)^\\s*(?:<current_datetime(?:\\s[^>]*)?>.*?(?:</current_datetime>\\s*|$)|<system(?:\\s[^>]*)?>.*?(?:</system>\\s*|$)|<developer(?:\\s[^>]*)?>.*?(?:</developer>\\s*|$)|<environment_context(?:\\s[^>]*)?>.*?(?:</environment_context>\\s*|$)|<environment_info(?:\\s[^>]*)?>.*?(?:</environment_info>\\s*|$)|<workspace_info(?:\\s[^>]*)?>.*?(?:</workspace_info>\\s*|$)|<in-app-browser-context(?:\\s[^>]*)?>.*?(?:</in-app-browser-context>\\s*|$)|<app-context(?:\\s[^>]*)?>.*?(?:</app-context>\\s*|$)|<context(?:\\s[^>]*)?>.*?(?:</context>\\s*|$)|<editorcontext(?:\\s[^>]*)?>.*?(?:</editorcontext>\\s*|$)|<reminderinstructions(?:\\s[^>]*)?>.*?(?:</reminderinstructions>\\s*|$)|<codex_internal_context(?:\\s[^>]*)?>.*?(?:</codex_internal_context>\\s*|$)|<system-reminder(?:\\s[^>]*)?>.*?(?:</system-reminder>\\s*|$)|<local-command-caveat(?:\\s[^>]*)?>.*?(?:</local-command-caveat>\\s*|$)|<local-command-stdout(?:\\s[^>]*)?>.*?(?:</local-command-stdout>\\s*|$)|<skill(?:\\s[^>]*)?>.*?(?:</skill>\\s*|$))+'`
 const displayPolicySQL = `replaceRegexpOne(x,` + displayPolicyPattern + `,'')`
 const displayPreambleSQL = `if(startsWith(lowerUTF8(x),'some of the conversation history has been summarized'),arrayFirst(t->trimBoth(t)!='',arrayMap(x->` + displayPolicySQL + `,extractAll(x,'(?is)<user_message>(.*?)</user_message>'))),` + displayPolicySQL + `)`
 
@@ -72,9 +72,11 @@ const searchWhitespacePattern = `'[\\s\\x{000b}\\x{0085}\\x{00a0}\\x{1680}\\x{20
 
 const searchTextMatch = `arrayExists(x->positionCaseInsensitiveUTF8(replaceRegexpAll(replaceRegexpAll(decodeHTMLComponent(x),'(?is)<t3_context[^>]*>.*?</t3_context>',''),` + searchWhitespacePattern + `,' '),{search:String})>0
  OR (position(x,'t3-citation://')>0 AND positionCaseInsensitiveUTF8(replaceRegexpAll(decodeURLComponent(replaceAll(x,'+',' ')),` + searchWhitespacePattern + `,' '),{search:String})>0)
- OR (startsWith({search:String},'/') AND position(x,'<command-name>')>0),` + userTextItems + `)`
+ OR positionCaseInsensitiveUTF8(x,'<command-name>')>0,` + userTextItems + `)`
 
-const searchTurnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
+const searchTurnStart = `(NOT ` + sideCall + ` AND (request_id IN
+ (SELECT argMin(request_id,(started_at,request_id)) FROM {db:Identifier}.request_facts
+ WHERE ` + timeFilter + ` AND ` + conversationTraffic + ` GROUP BY conversation_id) OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 
 // Walk candidate conversations in activity order without rereading earlier text pages.
 func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, source, filters string, wanted int, showSystem bool) ([]string, error) {
@@ -87,7 +89,7 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		p := cloneValues(w.params)
 		p.Set("search_pattern", "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(p.Get("search")))+"%")
 		lookup := ` FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND text LIKE {search_pattern:String}
- UNION ALL SELECT request_id,conversation_id FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND (overflow OR (startsWith({search:String},'/') AND has_command))`
+ UNION ALL SELECT request_id,conversation_id FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND (overflow OR has_command)`
 		candidates := `SELECT DISTINCT request_id,conversation_id FROM (SELECT request_id,conversation_id` + lookup + `)`
 		var matches []struct {
 			RequestID string `json:"request_id"`
@@ -138,8 +140,8 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		w.params.Set("search_to", hi)
 		startRule := searchTurnStart
 		if present {
-			// The earliest hash is only needed for conversations on this candidate page.
-			startRule = strings.Replace(startRule, " GROUP BY conversation_id", ` AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) GROUP BY conversation_id`, 1)
+			// Window-relative first requests and prompt hashes need only this candidate page.
+			startRule = strings.ReplaceAll(startRule, " GROUP BY conversation_id", ` AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) GROUP BY conversation_id`)
 		}
 		matches, err := c.matchingConversations(ctx, w, `started_at >= {search_from:DateTime64(9,'UTC')} AND started_at < {search_to:DateTime64(9,'UTC')} AND conversation_id IN (SELECT arrayJoin(JSONExtract({candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` AND `+startRule+compactFilter, size, present)
 		if err != nil {

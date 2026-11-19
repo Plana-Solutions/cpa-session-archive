@@ -138,3 +138,18 @@ delete the compressed copy after its measurements.
 
 The [round 9 qualification report](turn-search-benchmark.md) contains the full
 five-run cost matrix, title audit, insert overhead, and measurement limits.
+
+## Upgrade an existing search table
+
+The round 10 projection also keeps user-message tails containing tool results.
+They may be the first request in the reader's window even when `prior_seen` is
+true. The reader verifies the first request by timestamp and request ID and
+excludes later tool continuations.
+
+The table columns and ready comment are unchanged. To update a previously
+created table, mark it building and wait 33 seconds for readers to fall back.
+Drop only `turn_search_mv` and `turn_search_source`, then run the first three DDL
+statements again. The existing table and its rows remain. Record a new watermark
+and backfill the history again using the updated projection before activation.
+Duplicates do not change search results. This also fills candidates missing
+from the previous projection. Production has not applied this migration yet.

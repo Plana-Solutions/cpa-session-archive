@@ -90,11 +90,20 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 			externalMessage
 			Version string `json:"cache_version"`
 		}
-		externalFilter := ""
+		externalFilter, callColumn := "", ""
 		if format == "sft" {
-			externalFilter = " AND type NOT IN ('reasoning','thinking')"
+			var usable bool
+			externalFilter, callColumn, usable, err = c.nativeTrainingSelection(ctx, w)
+			if err != nil {
+				return nil, err
+			}
+			if !usable {
+				ticket["next_session_offset"] = sessionIndex + 1
+				ticket["next_offset"] = 0
+				return ticket, nil
+			}
 		}
-		err = c.query(ctx, `SELECT `+externalMetadataColumns+`,toString(ingested_at) AS cache_version FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
+		err = c.query(ctx, `SELECT `+externalMetadataColumns+callColumn+`,toString(ingested_at) AS cache_version FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+externalFilter+` ORDER BY position LIMIT 1 OFFSET {offset:UInt32} SETTINGS max_threads=1,max_block_size=1`, w.params, &rows)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +121,20 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 					return nil, err
 				}
 				if format == "sft" {
-					content, _ = json.Marshal(map[string]string{"role": m.Role, "content": m.Text})
+					message := map[string]any{"role": m.Role, "content": sanitizeTrainingText(m.Text)}
+					switch m.Role {
+					case "developer":
+						message["role"] = "system"
+					case "tool_call":
+						message = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": m.CallID, "type": "function", "function": map[string]any{"name": m.ToolName, "arguments": sanitizeTrainingText(m.Text)}}}}
+					case "tool", "tool_result":
+						message["role"] = "tool"
+						message["tool_call_id"] = m.CallID
+					}
+					content, err = json.Marshal(message)
+					if err != nil {
+						return nil, err
+					}
 				} else {
 					r := externalView(m)
 					body, _ := json.Marshal(m)
@@ -243,4 +265,35 @@ FROM {db:Identifier}.messages WHERE ` + timeFilter + ` AND request_id={id:String
 		return nil, nil
 	}
 	return json.Marshal(example)
+}
+
+// Legacy native projections have no call identity, so their tool events cannot form training pairs.
+func (c *clickhouseReader) nativeTrainingSelection(ctx context.Context, w readWindow) (string, string, bool, error) {
+	var columns []struct {
+		N uint64 `json:"n"`
+	}
+	err := c.query(ctx, `SELECT count() AS n FROM system.columns WHERE database={database:String} AND table='external_messages' AND name='call_id'`, url.Values{"database": {c.config.Database}}, &columns)
+	if err != nil {
+		return "", "", false, err
+	}
+	callColumn := ""
+	filter := ` AND type NOT IN ('reasoning','thinking','compaction','compaction_trigger','metadata') AND (role IN ('system','developer','user','assistant')`
+	if len(columns) > 0 && columns[0].N > 0 {
+		callColumn = ",call_id"
+		filter += ` OR (role IN ('tool_call','tool','tool_result') AND call_id!='' AND call_id IN
+        (SELECT call_id FROM {db:Identifier}.external_messages FINAL
+         WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}
+         GROUP BY call_id HAVING count()=2 AND countIf(role='tool_call' AND tool_name!='')=1
+         AND countIf(role IN ('tool','tool_result'))=1
+         AND minIf(position,role='tool_call')+1=minIf(position,role IN ('tool','tool_result'))
+         AND countIf(type IN ('reasoning','thinking','compaction','compaction_trigger','metadata'))=0))`
+	}
+	filter += `)`
+	var valid []struct {
+		User      uint64 `json:"user"`
+		Assistant uint64 `json:"assistant"`
+	}
+	err = c.query(ctx, `SELECT countIf(role='user')>0 AS user,countIf(role IN ('assistant','tool_call'))>0 AS assistant
+    FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+filter, w.params, &valid)
+	return filter, callColumn, len(valid) > 0 && valid[0].User > 0 && valid[0].Assistant > 0, err
 }

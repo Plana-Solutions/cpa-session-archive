@@ -520,3 +520,23 @@ func turnSearchInsertCosts(t *testing.T, c *clickhouseReader, path string) {
 		}
 	}
 }
+
+func TestRound10LiveFindability(t *testing.T) {
+	if os.Getenv("ARCHIVE_TURN_SEARCH_ACCEPTANCE") == "" {
+		t.Skip("explicit live audit opt-in")
+	}
+	evidence := os.Getenv("ARCHIVE_TURN_SEARCH_EVIDENCE")
+	if evidence == "" {
+		t.Fatal("evidence directory required")
+	}
+	to, err := time.Parse(time.RFC3339Nano, os.Getenv("ARCHIVE_TURN_SEARCH_TO"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := turnSearchFixture(t)
+	turnSearchCopyLive(t, c, to)
+	chExec(t, c, "OPTIMIZE TABLE cliproxy.request_facts FINAL")
+	statements := turnSearchSchema(t, c)
+	turnSearchBackfill(t, c, statements, to)
+	turnSearchFindability(t, c, to, filepath.Join(evidence, "title-findability.tsv"))
+}

@@ -195,6 +195,7 @@ func turnPreview(t clickhouseTurn) RequestTimelineView {
 }
 
 type externalMessage struct {
+	CallID          string    `json:"call_id,omitempty"`
 	SessionID       string    `json:"session_id"`
 	NativeSessionID string    `json:"native_session_id"`
 	Source          string    `json:"source"`

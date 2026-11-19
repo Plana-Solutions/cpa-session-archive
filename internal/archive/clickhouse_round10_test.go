@@ -32,6 +32,20 @@ func TestRound10Search(t *testing.T) {
 	for _, tag := range []string{"environment_context", "environment_info", "workspace_info", "in-app-browser-context", "app-context", "context", "editorcontext", "reminderinstructions", "codex_internal_context", "system-reminder", "local-command-caveat", "local-command-stdout", "skill"} {
 		seed(tag, "<"+tag+">"+strings.Repeat("context ", 800)+"</"+tag+">Actual prompt "+strings.Repeat("genuine prompt ", 500), nil)
 	}
+
+	var inserted []struct {
+		N uint64 `json:"n"`
+	}
+	if err := c.query(context.Background(), "SELECT count() AS n FROM cliproxy.turn_search WHERE request_id='mid-mv'", nil, &inserted); err != nil || len(inserted) != 1 || inserted[0].N != 1 {
+		t.Fatalf("MV did not retain first captured history before backfill: %v %v", inserted, err)
+	}
+	chExec(t, c, "ALTER TABLE cliproxy.turn_search MODIFY COMMENT 'archive-turn-search-v1-building'")
+	chExec(t, c, "DROP TABLE cliproxy.turn_search_mv")
+	chExec(t, c, "DROP VIEW cliproxy.turn_search_source")
+	statements = turnSearchSchema(t, c)
+	if err := c.query(context.Background(), "SELECT count() AS n FROM cliproxy.turn_search WHERE request_id='mid-mv'", nil, &inserted); err != nil || inserted[0].N != 1 {
+		t.Fatalf("upgrade changed existing search rows: %v %v", inserted, err)
+	}
 	backfill := statements[3]
 	for k, v := range map[string]string{"from": at.Add(-24 * time.Hour).Format("2006-01-02 15:04:05.999999999"), "to": at.Add(time.Hour).Format("2006-01-02 15:04:05.999999999"), "watermark": "2100-01-01 00:00:00"} {
 		backfill = strings.ReplaceAll(backfill, "{"+k+":DateTime64(9,'UTC')}", "toDateTime64('"+v+"',9,'UTC')")
@@ -75,9 +89,9 @@ func TestRound10Search(t *testing.T) {
 			}
 		}
 		if found != 13 {
-			t.Fatalf("visible wrapper titles=%d want 13, rows=%+v", found, got)
+			t.Fatalf("visible wrapper titles=%d want 13", found)
 		}
-		got, err = c.read("turns", url.Values{"session": {"environment_context"}})
+		got, err = c.read("turns", url.Values{"session_id": {"environment_context"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,5 +132,49 @@ func TestRound10NativeSFT(t *testing.T) {
 	content, _ = collectExport(t, c, url.Values{"id": {"external:no-assistant"}, "format": {"sft"}})
 	if content != "" {
 		t.Errorf("invalid user-only training sample emitted: %s", content)
+	}
+}
+
+func TestRound10NativeToolSFT(t *testing.T) {
+	c := turnSearchFixture(t)
+	chExec(t, c, "ALTER TABLE cliproxy.external_messages ADD COLUMN call_id String")
+	at := time.Now().UTC().Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")
+	events := []struct{ role, id, name, text string }{
+		{"user", "", "", "question"},
+		{"tool_call", "pair", "shell", `{"command":"pwd"}`},
+		{"tool_result", "pair", "", "/project"},
+		{"tool_result", "orphan", "", "must omit orphan"},
+		{"tool_result", "reversed", "", "must omit reversed"},
+		{"tool_call", "reversed", "shell", "must omit reversed"},
+		{"tool_call", "unfinished", "shell", "must omit unfinished"},
+		{"tool_call", "parallel-a", "shell", "must omit parallel"},
+		{"tool_call", "parallel-b", "shell", "must omit parallel"},
+		{"tool_result", "parallel-a", "", "must omit parallel"},
+		{"tool_result", "parallel-b", "", "must omit parallel"},
+		{"assistant", "", "", "answer"},
+	}
+	for i, e := range events {
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "paired", "ts": at, "position": i, "role": e.role, "type": e.role, "call_id": e.id, "tool_name": e.name, "text": e.text})
+	}
+	content, _ := collectExport(t, c, url.Values{"id": {"external:paired"}, "format": {"sft"}})
+	var sample SFTExample
+	if err := json.Unmarshal([]byte(content), &sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(sample.Messages) != 4 {
+		t.Fatalf("expected conversation and paired tools: %s", content)
+	}
+	call := sample.Messages[1]
+	result := sample.Messages[2]
+	calls, ok := call["tool_calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("missing conversational tool call: %v", call)
+	}
+	tool := calls[0].(map[string]any)
+	if call["role"] != "assistant" || tool["id"] != "pair" || tool["function"].(map[string]any)["name"] != "shell" || result["role"] != "tool" || result["tool_call_id"] != "pair" || result["content"] != "/project" {
+		t.Fatalf("tool pair changed: %s", content)
+	}
+	if strings.Contains(content, "must omit") {
+		t.Fatalf("invalid tool pairs exported: %s", content)
 	}
 }

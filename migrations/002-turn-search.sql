@@ -20,8 +20,8 @@ ORDER BY (started_at,conversation_id,request_id)
 SETTINGS index_granularity=256,merge_max_block_size=256,merge_max_block_size_bytes=1048576
 COMMENT 'archive-turn-search-v1-building';
 
--- This is a candidate superset. Side calls depend on the first prompt hash in
--- the reader's date window and are excluded by that reader after index lookup.
+-- First requests and side calls depend on the reader's date window. Keep all
+-- user-message tails here, including tool continuations, for reader verification.
 CREATE VIEW IF NOT EXISTS cliproxy.turn_search_source AS
 SELECT conversation_id,request_id,started_at,client,
  substring(normalized,1,65536) AS text,users AS texts,length(normalized)>65536 AS overflow,
@@ -35,8 +35,7 @@ FROM (
    arrayMap(x->if(arrayExists(prefix->startsWith(lowerUTF8(trimBoth(x)),prefix),['# agents.md instructions','codebase and user instructions are shown below.','this session is being continued from a previous conversation','base directory for this skill:','delegated task node:delegated-task:command']),'',x),arrayMap(x->replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime[^>]*>.*?(?:</current_datetime>\\s*|$)|<environment_context[^>]*>.*?(?:</environment_context>\\s*|$)|<environment_info[^>]*>.*?(?:</environment_info>\\s*|$)|<workspace_info[^>]*>.*?(?:</workspace_info>\\s*|$)|<in-app-browser-context[^>]*>.*?(?:</in-app-browser-context>\\s*|$)|<app-context[^>]*>.*?(?:</app-context>\\s*|$)|<context[^>]*>.*?(?:</context>\\s*|$)|<editorcontext[^>]*>.*?(?:</editorcontext>\\s*|$)|<reminderinstructions[^>]*>.*?(?:</reminderinstructions>\\s*|$)|<codex_internal_context[^>]*>.*?(?:</codex_internal_context>\\s*|$)|<system-reminder[^>]*>.*?(?:</system-reminder>\\s*|$)|<local-command-caveat[^>]*>.*?(?:</local-command-caveat>\\s*|$)|<local-command-stdout[^>]*>.*?(?:</local-command-stdout>\\s*|$)|<skill[^>]*>.*?(?:</skill>\\s*|$))+',''),arrayMap(x->if(startsWith(lowerUTF8(x),'some of the conversation history has been summarized'),arrayFirst(t->trimBoth(t)!='',arrayMap(x->replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime>.*?(?:</current_datetime>\\s*|$)|<system>.*?(?:</system>\\s*|$)|<developer>.*?(?:</developer>\\s*|$))+',''),extractAll(x,'(?is)<user_message>(.*?)</user_message>'))),replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime>.*?(?:</current_datetime>\\s*|$)|<system>.*?(?:</system>\\s*|$)|<developer>.*?(?:</developer>\\s*|$))+','')),arrayMap(x->trimBoth(x),arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32))))) AS users
   FROM cliproxy.request_facts
   WHERE conversation_id!='' AND kind NOT IN ('count_tokens','models','embeddings')
-   AND (NOT prior_seen OR (NOT arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)
-    AND arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)))
+   AND (NOT prior_seen OR arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type))
  )
 );
 
@@ -53,8 +52,7 @@ FROM (
    arrayMap(x->if(arrayExists(prefix->startsWith(lowerUTF8(trimBoth(x)),prefix),['# agents.md instructions','codebase and user instructions are shown below.','this session is being continued from a previous conversation','base directory for this skill:','delegated task node:delegated-task:command']),'',x),arrayMap(x->replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime[^>]*>.*?(?:</current_datetime>\\s*|$)|<environment_context[^>]*>.*?(?:</environment_context>\\s*|$)|<environment_info[^>]*>.*?(?:</environment_info>\\s*|$)|<workspace_info[^>]*>.*?(?:</workspace_info>\\s*|$)|<in-app-browser-context[^>]*>.*?(?:</in-app-browser-context>\\s*|$)|<app-context[^>]*>.*?(?:</app-context>\\s*|$)|<context[^>]*>.*?(?:</context>\\s*|$)|<editorcontext[^>]*>.*?(?:</editorcontext>\\s*|$)|<reminderinstructions[^>]*>.*?(?:</reminderinstructions>\\s*|$)|<codex_internal_context[^>]*>.*?(?:</codex_internal_context>\\s*|$)|<system-reminder[^>]*>.*?(?:</system-reminder>\\s*|$)|<local-command-caveat[^>]*>.*?(?:</local-command-caveat>\\s*|$)|<local-command-stdout[^>]*>.*?(?:</local-command-stdout>\\s*|$)|<skill[^>]*>.*?(?:</skill>\\s*|$))+',''),arrayMap(x->if(startsWith(lowerUTF8(x),'some of the conversation history has been summarized'),arrayFirst(t->trimBoth(t)!='',arrayMap(x->replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime>.*?(?:</current_datetime>\\s*|$)|<system>.*?(?:</system>\\s*|$)|<developer>.*?(?:</developer>\\s*|$))+',''),extractAll(x,'(?is)<user_message>(.*?)</user_message>'))),replaceRegexpOne(x,'(?is)^\\s*(?:<current_datetime>.*?(?:</current_datetime>\\s*|$)|<system>.*?(?:</system>\\s*|$)|<developer>.*?(?:</developer>\\s*|$))+','')),arrayMap(x->trimBoth(x),arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32))))) AS users
   FROM cliproxy.request_facts
   WHERE conversation_id!='' AND kind NOT IN ('count_tokens','models','embeddings')
-   AND (NOT prior_seen OR (NOT arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)
-    AND arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)))
+   AND (NOT prior_seen OR arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type))
  )
 );
 
