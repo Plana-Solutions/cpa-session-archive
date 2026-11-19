@@ -133,6 +133,9 @@ func TestRound10NativeSFT(t *testing.T) {
 	if content != "" {
 		t.Errorf("invalid user-only training sample emitted: %s", content)
 	}
+	if _, err := c.read("export", url.Values{"id": {"external:no-assistant"}, "format": {"sft"}, "byte_offset": {"1"}}); err == nil {
+		t.Fatal("invalid native sample silently ended a partial record")
+	}
 }
 
 func TestRound10NativeToolSFT(t *testing.T) {

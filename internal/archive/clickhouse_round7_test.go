@@ -115,7 +115,7 @@ func TestRound7Regressions(t *testing.T) {
 
 	t.Run("partial record cannot finish after session disappears", func(t *testing.T) {
 		at := time.Now().UTC().Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")
-		chInsert(t, c, "external_messages", map[string]any{"session_id": "disappearing", "ts": at, "position": 0, "role": "user", "type": "message", "text": strings.Repeat("x", rawChunk*2)})
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "disappearing", "ts": at, "position": 0, "role": "user", "type": "message", "text": strings.Repeat("x", rawChunk*2)}, map[string]any{"session_id": "disappearing", "ts": at, "position": 1, "role": "assistant", "type": "message", "text": "answer"})
 		q := url.Values{"scope": {"all"}, "id": {"external:disappearing"}, "format": {"sft"}}
 		first, err := c.read("export", q)
 		if err != nil {

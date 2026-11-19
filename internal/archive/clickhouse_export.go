@@ -98,6 +98,9 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 				return nil, err
 			}
 			if !usable {
+				if part > 0 || offset > 0 {
+					return nil, badQuery("native training sample changed while exporting; restart the export")
+				}
 				ticket["next_session_offset"] = sessionIndex + 1
 				ticket["next_offset"] = 0
 				return ticket, nil

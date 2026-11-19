@@ -422,9 +422,9 @@ func TestClickHouseExportReadBudget(t *testing.T) {
 	}
 	t.Run("native replacement invalidates serialized record", func(t *testing.T) {
 		c.client.Transport = http.DefaultTransport
-		row := map[string]any{"session_id": "cache-version", "ts": at, "ingested_at": at, "position": 0, "role": "assistant", "type": "message", "text": "original version"}
-		chInsert(t, c, "external_messages", row)
-		q := url.Values{"id": {"external:cache-version"}, "format": {"sft"}, "from": {time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano)}, "to": {time.Now().UTC().Format(time.RFC3339Nano)}}
+		row := map[string]any{"session_id": "cache-version", "ts": at, "ingested_at": at, "position": 1, "role": "assistant", "type": "message", "text": "original version"}
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "cache-version", "ts": at, "position": 0, "role": "user", "type": "message", "text": "question"}, row)
+		q := url.Values{"offset": {"1"}, "id": {"external:cache-version"}, "format": {"sft"}, "from": {time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339Nano)}, "to": {time.Now().UTC().Format(time.RFC3339Nano)}}
 		got, err := c.read("export", q)
 		if err != nil || !strings.Contains(fmt.Sprint(got), "original version") {
 			t.Fatalf("original projection missing: %v", err)
