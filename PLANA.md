@@ -77,7 +77,7 @@ With private `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` vari
 
 Native SFT exports include system, developer, user, and assistant messages and
 omit metadata, compaction, and reasoning events. Developer messages map to
-system messages. A sample requires both a user and an assistant message.
+system messages. A sample requires a user message and must end with an assistant response.
 If the optional native projection includes a `call_id String` column, paired
 `tool_call` and `tool_result` or `tool` events map to assistant `tool_calls` and
 `tool` messages. Each ID must have one named call immediately followed by one result.

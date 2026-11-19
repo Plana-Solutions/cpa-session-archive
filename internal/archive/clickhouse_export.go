@@ -296,7 +296,7 @@ func (c *clickhouseReader) nativeTrainingSelection(ctx context.Context, w readWi
 		User      uint64 `json:"user"`
 		Assistant uint64 `json:"assistant"`
 	}
-	err = c.query(ctx, `SELECT countIf(role='user')>0 AS user,countIf(role IN ('assistant','tool_call'))>0 AS assistant
+	err = c.query(ctx, `SELECT countIf(role='user')>0 AS user,argMax(role,position)='assistant' AS assistant
     FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id={session:String}`+filter, w.params, &valid)
 	return filter, callColumn, len(valid) > 0 && valid[0].User > 0 && valid[0].Assistant > 0, err
 }
