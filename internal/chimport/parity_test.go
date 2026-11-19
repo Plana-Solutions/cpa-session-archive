@@ -32,6 +32,7 @@ func TestLiveExtractionParity(t *testing.T) {
 		{"subagent", "claude", "/v1/messages", `{"metadata":{"user_id":"{\"session_id\":\"s1\",\"agent_id\":\"a7\"}"},"messages":[]}`, "s1", "claude:s1:agent:a7", "claude-code", "claude:s1", map[string][]string{"header.x-claude-code-session-id": {"s1"}}},
 		{"codex", "openai-response", "/v1/responses", `{"client_metadata":{"thread_id":"t1"},"input":"hi"}`, "t1", "codex:t1", "codex", "", map[string][]string{"originator": {"codex"}}},
 		{"count_tokens", "claude", "/v1/messages/count_tokens", `{"messages":[]}`, "request:req1", "claude:s1", "claude-code", "", map[string][]string{"header.x-claude-code-session-id": {"s1"}}},
+		{"count_tokens_fingerprint", "claude", "/v1/messages/count_tokens", `{"messages":[{"role":"user","content":"hi"}]}`, "request:req1", "fp:3affd2e367e55502", "claude-code", "", map[string][]string{"client.user_agent": {"claude-cli/2.1.319"}}},
 		{"chat", "openai", "/v1/chat/completions", `{"messages":[{"role":"user","content":"hi"}]}`, "chat1", "fp:5748322fd07ae370", "OpenAI", "", map[string][]string{"client": {"OpenAI/JS 5.20.1"}, "client.user_agent": {"OpenAI/JS 5.20.1"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,7 +50,7 @@ func TestLiveExtractionParity(t *testing.T) {
 			if f.ConversationID != tc.conversation || f.Client != tc.client || f.ParentConversationID != tc.parent {
 				t.Fatalf("conversation=%q client=%q parent=%q", f.ConversationID, f.Client, f.ParentConversationID)
 			}
-			if u.Generate == (tc.name == "count_tokens") {
+			if u.Generate != !strings.Contains(tc.path, "count_tokens") {
 				t.Fatal("incorrect generate flag")
 			}
 		})

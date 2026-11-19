@@ -94,6 +94,7 @@ facts = {}
 usage_ids = set()
 request_ids = set()
 missing_body = leaks = scanned = no_model = count_tokens = bad_count_tokens = codex_rows = bad_codex = 0
+count_tokens_outside_claude = 0
 counts = {}
 clients = {}
 statuses = {}
@@ -122,7 +123,9 @@ for table in ["requests", "usage", "external_messages", "request_facts"]:
             statuses[row["parse_status"]] = statuses.get(row["parse_status"], 0) + 1
             if row["kind"] == "count_tokens":
                 count_tokens += 1
-                bad_count_tokens += not row["conversation_id"].startswith("claude:")
+                outside = not row["conversation_id"].startswith("claude:")
+                count_tokens_outside_claude += outside
+                bad_count_tokens += outside and expected_rows[row["request_id"]]["conversation_id"].startswith("claude:")
             if row["client"] == "codex_cli_rs" or row["conversation_source"] == "codex-header":
                 codex_rows += 1
                 bad_codex += not row["conversation_id"].startswith("codex:")
@@ -158,7 +161,7 @@ for row in rows("SELECT base64Encode(data) AS data FROM cliproxy.body_blobs FORM
     scanned += 1
 
 expected_events = sum(db.execute("SELECT count(*) FROM external_events WHERE session_id=?", (sid,)).fetchone()[0] for sid in native)
-print(json.dumps({"rows": counts, "raw_archive_body_session_ids": len({sid for rid, sid, _ in records if rid in body_ids}), "live_extractor_sessions_with_bodies": len(expected), "derived_conversations_with_bodies": len(derived), "one_to_one_gate": gate, "byte_exact": len(expected_rows), "live_overlap": len(shared), "live_identity_mismatches": live_mismatches, "released_extractor_mismatches": expected_mismatches, "missing_body_requests": missing_body, "no_model_rows": no_model, "count_tokens_rows": count_tokens, "count_tokens_outside_claude": bad_count_tokens, "codex_rows": codex_rows, "codex_without_prefix": bad_codex, "clients": clients, "parse_status": statuses, "archive_native_sessions": len(native), "archive_native_events": expected_events, "secrets_known": len(secrets), "rows_scanned": scanned, "leak_rows": leaks}, sort_keys=True))
+print(json.dumps({"rows": counts, "raw_archive_body_session_ids": len({sid for rid, sid, _ in records if rid in body_ids}), "live_extractor_sessions_with_bodies": len(expected), "derived_conversations_with_bodies": len(derived), "one_to_one_gate": gate, "byte_exact": len(expected_rows), "live_overlap": len(shared), "live_identity_mismatches": live_mismatches, "released_extractor_mismatches": expected_mismatches, "missing_body_requests": missing_body, "no_model_rows": no_model, "count_tokens_rows": count_tokens, "count_tokens_outside_claude": count_tokens_outside_claude, "count_tokens_identity_mismatches": bad_count_tokens, "codex_rows": codex_rows, "codex_without_prefix": bad_codex, "clients": clients, "parse_status": statuses, "archive_native_sessions": len(native), "archive_native_events": expected_events, "secrets_known": len(secrets), "rows_scanned": scanned, "leak_rows": leaks}, sort_keys=True))
 for query in [
     "SELECT countIf(total_tokens>0) AS rows_with_tokens,sum(input_tokens) AS sum_input_tokens,sum(output_tokens) AS sum_output_tokens,sum(total_tokens) AS sum_total_tokens FROM cliproxy.usage",
     "SELECT table,count() AS parts,sum(rows) AS rows,sum(data_compressed_bytes) AS compressed_bytes,sum(bytes_on_disk) AS disk_bytes,sum(data_uncompressed_bytes) AS uncompressed_bytes FROM system.parts WHERE active AND database='cliproxy' GROUP BY table ORDER BY table",
