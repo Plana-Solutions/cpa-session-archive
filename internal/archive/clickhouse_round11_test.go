@@ -213,3 +213,36 @@ func round11Costs(t *testing.T, c *clickhouseReader, to time.Time) {
 	}
 	turnSearchStats(t, c, "round11-live")
 }
+
+func TestRound11DuplicateDisplay(t *testing.T) {
+	c := turnSearchFixture(t)
+	statements := turnSearchSchema(t, c)
+	rows := []map[string]any{}
+	ids := []string{}
+	at := time.Now().UTC().Add(-time.Hour)
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprint("batch-", i)
+		ids = append(ids, id)
+		rows = append(rows, map[string]any{"request_id": id, "conversation_id": id, "started_at": at.Add(time.Duration(i) * time.Second).Format("2006-01-02 15:04:05.999999999"), "kind": "messages", "msg_direction": []string{"input"}, "msg_role": []string{"user"}, "msg_type": []string{"message"}, "msg_text": []string{"Prompt " + id}})
+	}
+	chInsert(t, c, "request_facts", rows...)
+	chExec(t, c, `INSERT INTO cliproxy.turn_search SELECT s.* FROM cliproxy.turn_search AS s CROSS JOIN numbers(16) AS repeats WHERE request_id='batch-0'`)
+	chExec(t, c, `OPTIMIZE TABLE cliproxy.turn_search FINAL`)
+	turnSearchActivate(t, c, statements)
+	w, err := windowFor(nil, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.displayTexts(context.Background(), w, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 8 {
+		t.Fatalf("duplicate candidates consumed display batch: got %d IDs", len(out))
+	}
+	for _, id := range ids {
+		if text, _ := firstUserText(out[id].Texts); text != "Prompt "+id {
+			t.Fatalf("missing prompt %s", id)
+		}
+	}
+}

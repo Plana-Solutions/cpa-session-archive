@@ -61,9 +61,9 @@ func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids [
 	if err != nil {
 		return nil, err
 	}
-	table, columns := "request_facts", displayTextColumns
+	table, columns, groupBy := "request_facts", displayTextColumns, ""
 	if present {
-		table, columns = "turn_search", "display_texts AS texts"
+		table, columns, groupBy = "turn_search", "any(display_texts) AS texts", " GROUP BY request_id"
 	}
 	// Eight bounded arrays fit below the reader's result cap even with JSON escaping.
 	for start := 0; start < len(ids); start += 8 {
@@ -78,7 +78,7 @@ func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids [
 			keys = append(keys, "{"+key+":String}")
 		}
 		var rows []displayText
-		err := c.query(ctx, `SELECT request_id,`+columns+` FROM {db:Identifier}.`+table+` PREWHERE `+timeFilter+` AND request_id IN (`+strings.Join(keys, ",")+`) LIMIT 8`, params, &rows)
+		err := c.query(ctx, `SELECT request_id,`+columns+` FROM {db:Identifier}.`+table+` PREWHERE `+timeFilter+` AND request_id IN (`+strings.Join(keys, ",")+`)`+groupBy+` LIMIT 8`, params, &rows)
 		if err != nil {
 			return nil, err
 		}
