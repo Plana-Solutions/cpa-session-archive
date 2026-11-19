@@ -29,7 +29,7 @@ func TestLiveExtractionParity(t *testing.T) {
 		headers                                                         map[string][]string
 	}{
 		{"claude", "claude", "/v1/messages", `{"messages":[{"role":"user","content":"hi"}]}`, "s1", "claude:s1", "claude-code", "", map[string][]string{"header.x-claude-code-session-id": {"s1"}, "client": {"claude-cli/2.1.319 (external, cli)"}, "client.user_agent": {"claude-cli/2.1.319 (external, cli)"}}},
-		{"subagent", "claude", "/v1/messages", `{"messages":[]}`, "s1", "claude:s1:agent:a7", "claude-code", "claude:s1", map[string][]string{"header.x-claude-code-session-id": {"s1"}, "header.x-claude-code-agent-id": {"a7"}}},
+		{"subagent", "claude", "/v1/messages", `{"metadata":{"user_id":"{\"session_id\":\"s1\",\"agent_id\":\"a7\"}"},"messages":[]}`, "s1", "claude:s1:agent:a7", "claude-code", "claude:s1", map[string][]string{"header.x-claude-code-session-id": {"s1"}}},
 		{"codex", "openai-response", "/v1/responses", `{"client_metadata":{"thread_id":"t1"},"input":"hi"}`, "t1", "codex:t1", "codex", "", map[string][]string{"originator": {"codex"}}},
 		{"count_tokens", "claude", "/v1/messages/count_tokens", `{"messages":[]}`, "request:req1", "claude:s1", "claude-code", "", map[string][]string{"header.x-claude-code-session-id": {"s1"}}},
 		{"chat", "openai", "/v1/chat/completions", `{"messages":[{"role":"user","content":"hi"}]}`, "chat1", "fp:5748322fd07ae370", "OpenAI", "", map[string][]string{"client": {"OpenAI/JS 5.20.1"}, "client.user_agent": {"OpenAI/JS 5.20.1"}}},

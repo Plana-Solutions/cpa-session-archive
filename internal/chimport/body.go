@@ -46,10 +46,14 @@ func (c *client) writeBodies(ctx context.Context, items []bodyItems) (int64, err
 			continue
 		}
 		refs := []string{}
+		unique := map[bodystore.Hash]bool{}
 		for _, other := range items {
 			if other.lineage == item.lineage {
 				for h := range other.blobs {
-					refs = append(refs, "unhex('"+hex.EncodeToString(h[:])+"')")
+					if !unique[h] {
+						refs = append(refs, "unhex('"+hex.EncodeToString(h[:])+"')")
+						unique[h] = true
+					}
 				}
 			}
 		}
@@ -57,27 +61,31 @@ func (c *client) writeBodies(ctx context.Context, items []bodyItems) (int64, err
 			known[sentinel] = true
 			continue
 		}
-		b, err := c.call(ctx, `SELECT hex(hash) AS hash_hex FROM cliproxy.body_blobs WHERE lineage={lineage:UInt64} AND hash IN (`+strings.Join(refs, ",")+`) FORMAT JSONEachRow`, url.Values{"param_lineage": {strconv.FormatUint(item.lineage, 10)}}, nil, false)
-		if err != nil {
-			return 0, fmt.Errorf("blob preload failed: %s", err)
-		}
-		dec := json.NewDecoder(bytes.NewReader(b))
-		for {
-			var row struct {
-				Hash string `json:"hash_hex"`
-			}
-			err := dec.Decode(&row)
-			if err == io.EOF {
-				break
-			}
+		sort.Strings(refs)
+		for start := 0; start < len(refs); start += 256 {
+			end := min(start+256, len(refs))
+			b, err := c.call(ctx, `SELECT hex(hash) AS hash_hex FROM cliproxy.body_blobs WHERE lineage={lineage:UInt64} AND hash IN (`+strings.Join(refs[start:end], ",")+`) FORMAT JSONEachRow`, url.Values{"param_lineage": {strconv.FormatUint(item.lineage, 10)}}, nil, false)
 			if err != nil {
-				return 0, err
+				return 0, fmt.Errorf("blob preload failed: %s", err)
 			}
-			h, err := hex.DecodeString(row.Hash)
-			if err != nil || len(h) != 16 {
-				return 0, bodystore.ErrIncomplete
+			dec := json.NewDecoder(bytes.NewReader(b))
+			for {
+				var row struct {
+					Hash string `json:"hash_hex"`
+				}
+				err := dec.Decode(&row)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return 0, err
+				}
+				h, err := hex.DecodeString(row.Hash)
+				if err != nil || len(h) != 16 {
+					return 0, bodystore.ErrIncomplete
+				}
+				known[bodystore.Key{Lineage: item.lineage, Hash: bodystore.Hash(h)}] = true
 			}
-			known[bodystore.Key{Lineage: item.lineage, Hash: bodystore.Hash(h)}] = true
 		}
 		known[sentinel] = true
 	}

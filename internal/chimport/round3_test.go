@@ -281,3 +281,32 @@ func TestEmptyGzipBlobIsCorrupt(t *testing.T) {
 		t.Fatal("empty compressed blob imported", err)
 	}
 }
+
+func TestBlobPreloadBoundsAndDeduplicatesQueries(t *testing.T) {
+	item := bodyItems{lineage: 7, blobs: map[bodystore.Hash][]byte{}}
+	for i := 0; i < 600; i++ {
+		b := []byte(strconv.Itoa(i))
+		item.blobs[bodystore.HashBytes(b)] = b
+	}
+	queries := 0
+	refs := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		if strings.HasPrefix(q, "SELECT") {
+			queries++
+			refs += strings.Count(q, "unhex(")
+			if len(r.URL.RequestURI()) > 16384 {
+				t.Error("preload exceeds HTTP field budget")
+				w.WriteHeader(500)
+			}
+		}
+		io.Copy(io.Discard, r.Body)
+	}))
+	defer server.Close()
+	if _, err := newClient(server.URL, "", "").writeBodies(context.Background(), []bodyItems{item, item}); err != nil {
+		t.Fatal(err)
+	}
+	if queries < 2 || refs != 600 {
+		t.Fatal("preload did not bound distinct references", queries, refs)
+	}
+}
