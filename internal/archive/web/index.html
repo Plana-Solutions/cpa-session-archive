@@ -2448,7 +2448,7 @@
       }
       function renderTurnSummary(turn, number) {
         return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
-          esc(turn.automated ? "Automated step" : t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || (turn.automated ? "Client notification or compaction" : t("untitled"))) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
+          esc(turn.automated ? "Automated step" : t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || (turn.automated ? "No user prompt in this step" : t("untitled"))) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
           renderFinalAnswer(turn) +
           '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
           '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
@@ -2504,7 +2504,7 @@
           '<section class="user-message"><h3>' +
           esc(turn.automated ? "Automated step" : t("userRole")) +
           "</h3>" +
-          renderLazyTurnText(turn.user_text || (turn.automated ? "Client notification or compaction" : t("untitled"))) +
+          renderLazyTurnText(turn.user_text || (turn.automated ? "No user prompt in this step" : t("untitled"))) +
           '</section><section class="turn-final"><h3>' +
           esc(t("assistantRole")) +
           "</h3>" +

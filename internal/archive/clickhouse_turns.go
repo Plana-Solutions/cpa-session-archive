@@ -154,7 +154,7 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 	}
 	for i := range rows {
 		rows[i].UserText, rows[i].Continued = firstUserText(texts[rows[i].TitleRequest].Texts)
-		rows[i].Automated = rows[i].UserText == "" && automatedUserItems(texts[rows[i].TitleRequest].Texts)
+		rows[i].Automated = rows[i].UserText == ""
 		text := []rune(rows[i].UserText)
 		rows[i].UserText = string(text[:min(1600, len(text))])
 	}

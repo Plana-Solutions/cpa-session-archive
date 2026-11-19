@@ -14,6 +14,6 @@ test('automated turns are labelled separately from user prompts', async ({ page 
   });
   const card = page.locator('.turn-card');
   await expect(card.getByRole('heading', {name: 'Automated step', exact: true})).toBeVisible();
-  await expect(card).toContainText('Client notification or compaction');
+  await expect(card).toContainText('No user prompt in this step');
   await expect(card).not.toContainText('CRITICAL: Respond with TEXT ONLY');
 });

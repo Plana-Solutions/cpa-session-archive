@@ -31,6 +31,7 @@ func TestRound11SystemAndAutomation(t *testing.T) {
 		"CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.",
 		"Delegated task node:delegated-task:command%3Amcp%3Adelegate-task (Audit) [completed]:\nThere are few real findings.",
 		"<task-notification>\n<task-id>abc</task-id>\n<status>completed</status>\n<summary>Background command completed</summary>\n</task-notification>",
+		"<system-reminder>Client context without a human prompt</system-reminder>",
 	} {
 		seed(fmt.Sprint("auto", i), "ordinary", text, nil)
 	}
@@ -86,7 +87,7 @@ func TestRound11SystemAndAutomation(t *testing.T) {
 		t.Fatal(err)
 	}
 	turns := out.(map[string]any)["turns"].([]clickhouseTurn)
-	if len(turns) != 4 || turns[0].Automated || turns[0].UserText != "Fix the notification labels" {
+	if len(turns) != 5 || turns[0].Automated || turns[0].UserText != "Fix the notification labels" {
 		t.Fatalf("turns %+v", turns)
 	}
 	for _, turn := range turns[1:] {
@@ -139,7 +140,7 @@ func TestRound11Acceptance(t *testing.T) {
 			}
 		}
 		t.Logf("CLAUDE_SESSION turns=%d automated=%d unexplained_blank=%d", len(turns), automated, blank)
-		if automated < 2 {
+		if automated < 2 || blank != 0 {
 			t.Fatal("live-shaped automated turns not exercised")
 		}
 	}
