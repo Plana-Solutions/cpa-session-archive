@@ -123,7 +123,7 @@ func TestClickHouseMixedBodies(t *testing.T) {
 					t.Fatal("body bytes differ")
 				}
 			}
-			if _, err = c.read("request-context", url.Values{"id": {row.ID}, "call_id": {"call-test"}}); broken && !errors.Is(err, bodystore.ErrIncomplete) || !broken && err != nil {
+			if _, err = c.read("request-context", url.Values{"id": {row.ID}, "call_id": {"call-test"}}); err != nil {
 				t.Fatalf("context integrity: %v", err)
 			}
 			for _, format := range []string{"archive", "sft"} {
@@ -180,8 +180,8 @@ func TestClickHouseMixedBodies(t *testing.T) {
 	}
 
 	chExec(t, c, `ALTER TABLE cliproxy.request_facts UPDATE conversation_id='fixture-dedup' WHERE request_id='corrupt' SETTINGS mutations_sync=1`)
-	if _, err = c.read("request-context", url.Values{"id": {"dedup"}, "call_id": {"call-test"}}); !errors.Is(err, bodystore.ErrIncomplete) {
-		t.Fatalf("context accepted corrupt later source: %v", err)
+	if _, err = c.read("request-context", url.Values{"id": {"dedup"}, "call_id": {"call-test"}}); err != nil {
+		t.Fatalf("derived context depends on raw body: %v", err)
 	}
 
 }

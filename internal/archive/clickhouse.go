@@ -361,11 +361,19 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 	if filters != unfiltered {
 		selection = ` AND conversation_id IN (SELECT conversation_id ` + source + ` WHERE ` + filters + ` GROUP BY conversation_id)`
 	}
+	presentSearch, err := c.turnSearchExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	systemRule := systemSession
+	if presentSearch {
+		systemRule = `request_id IN (SELECT request_id FROM {db:Identifier}.turn_search WHERE ` + timeFilter + ` AND system)`
+	}
 	having := ""
 	if q.Get("show_system") != "1" {
 		having = ` HAVING NOT system`
 	}
-	sql := `SELECT CAST(max(` + systemSession + `),'Bool') AS system,conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE conversation_id!='' AND ` + timeFilter + ` AND ` + conversationTraffic + selection + ` GROUP BY conversation_id` + having
+	sql := `SELECT CAST(max(` + systemRule + `),'Bool') AS system,conversation_id AS session_id,'' AS summary,'' AS project,'' AS key_id,argMax(model,started_at) AS model,argMax(client,started_at) AS client,count() AS requests,min(started_at) AS first_at,max(started_at) AS last_at,toInt64(0) AS input_tokens,toInt64(0) AS output_tokens,toInt64(0) AS total_tokens,'' AS source_kind,'' AS source_tool FROM {db:Identifier}.request_facts WHERE conversation_id!='' AND ` + timeFilter + ` AND ` + conversationTraffic + selection + ` GROUP BY conversation_id` + having
 	present, err := c.externalExists(ctx)
 	if err != nil {
 		return nil, err

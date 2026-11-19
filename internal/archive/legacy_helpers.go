@@ -456,7 +456,7 @@ func meaningfulUserText(value string) string {
 	if value == "" {
 		value = strings.Join(comments, "\n")
 	}
-	if strings.HasPrefix(value, "Delegated task node:delegated-task:command") {
+	if automatedUserItems([]string{value}) {
 		return ""
 	}
 	command, args := "", ""

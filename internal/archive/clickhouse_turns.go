@@ -15,6 +15,7 @@ import (
 
 type clickhouseTurn struct {
 	TurnSummary
+	Automated       bool   `json:"automated,omitempty"`
 	Reasoning       string `json:"reasoning,omitempty"`
 	DurationMS      int64  `json:"duration_ms"`
 	InputTokens     int64  `json:"input_tokens"`
@@ -153,6 +154,7 @@ func (c *clickhouseReader) turns(ctx context.Context, w readWindow, q url.Values
 	}
 	for i := range rows {
 		rows[i].UserText, rows[i].Continued = firstUserText(texts[rows[i].TitleRequest].Texts)
+		rows[i].Automated = rows[i].UserText == "" && automatedUserItems(texts[rows[i].TitleRequest].Texts)
 		text := []rune(rows[i].UserText)
 		rows[i].UserText = string(text[:min(1600, len(text))])
 	}
@@ -360,7 +362,12 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 	if err != nil {
 		return nil, err
 	}
-	err = c.query(ctx, `SELECT `+turnColumns+` `+factsWithUsage+` WHERE `+timeFilter+` AND f.request_id={id:String} LIMIT 1`, w.params, &facts)
+	columns, source := turnColumns, factsWithUsage
+	if endpoint == "request-context" {
+		columns = `request_id AS turn_id,conversation_id AS session_id,started_at AS first_at`
+		source = `FROM {db:Identifier}.request_facts AS f`
+	}
+	err = c.query(ctx, `SELECT `+columns+` `+source+` WHERE `+timeFilter+` AND f.request_id={id:String} LIMIT 1`, w.params, &facts)
 	if err != nil {
 		return nil, err
 	}
@@ -415,9 +422,6 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		return view, nil
 	}
 	if endpoint == "request-context" {
-		if _, err = c.rawRequest(ctx, w, t); err != nil {
-			return nil, err
-		}
 		w.params.Set("session", t.SessionID)
 		if q.Get("call_id") == "" {
 			return nil, badQuery("call_id is required")
@@ -441,11 +445,7 @@ func (c *clickhouseReader) request(ctx context.Context, w readWindow, q url.Valu
 		for _, m := range messages {
 			cw := w
 			cw.params = cloneValues(w.params)
-			cw.params.Set("from", t.FirstAt.Format("2006-01-02 15:04:05.999999999"))
-			cw.params.Set("to", t.FirstAt.Add(24*time.Hour).Format("2006-01-02 15:04:05.999999999"))
-			if _, err = c.rawRequest(ctx, cw, clickhouseTurn{TurnSummary: TurnSummary{TurnID: m.RequestID, SessionID: t.SessionID}}); err != nil {
-				return nil, err
-			}
+			cw.params.Set("id", m.RequestID)
 			cw.params.Set("from", m.StartedAt.Format("2006-01-02 15:04:05.999999999"))
 			cw.params.Set("to", m.StartedAt.Add(time.Nanosecond).Format("2006-01-02 15:04:05.999999999"))
 			cw.params.Set("context_direction", m.Direction)

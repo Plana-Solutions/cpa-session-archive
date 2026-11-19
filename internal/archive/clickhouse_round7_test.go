@@ -470,8 +470,8 @@ func round7DiskGuard(t *testing.T) {
 		if _, err := fmt.Sscan(string(out), &kb); err != nil {
 			t.Fatal(err)
 		}
-		if kb*1024 > 1700000000 {
-			t.Fatal("stop before task footprint exceeds 2 GB")
+		if kb*1024 > 1400000000 {
+			t.Fatal("stop before task footprint exceeds 1.5 GB")
 		}
 	}
 }

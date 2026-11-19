@@ -25,6 +25,9 @@ System sessions are hidden before pagination by default. The Show system session
 
 Exports use paged browser downloads. The UI concatenates UTF-8 chunks into one JSONL file. Archive export selects the last raw request of each proxy turn. SFT export selects the latest successful non-side-call request and uses normalized emitted messages, including tool call IDs and arguments, in conversation order. Neither format has a 200-record or 4 MiB session cap. Every ClickHouse response and API chunk remains below 8 MiB. The browser caps the assembled download at 64 MiB and warns before export-all starts. SFT can also exceed that cap. Open individual sessions and use Download this session for larger archives. An exact size estimate would require reconstructing every exported record, so export-all does not perform that extra scan. A missing session or record during a nonzero byte cursor returns an error rather than reporting a completed partial file. An incomplete proxy body is skipped, the cursor advances, and the browser reports the skipped-record count. Direct request reads still reject incomplete bodies. Native imports expose redacted event projections; original source files are not stored in ClickHouse. Existing collector and importer commands remain for historical data access and tests. The plugin no longer connects to either command.
 
+See [Deploy the ClickHouse archive](docs/deploy-clickhouse.md) for the required
+migration-first order and explicit rollback version.
+
 ## Verification
 
 The integration suite starts an isolated local ClickHouse server, applies the pinned upstream schema at `api-token/Cli-Proxy-API-Management-Center@60b5048`, and inserts fixtures. Schema copies are in `internal/archive/testdata/clickhouse`. It skips only if the binary is missing.

@@ -9,10 +9,14 @@ terms remain supported. Deep pages no longer switch to full-window text
 verification. The search deadline remains three seconds and the default window remains seven days.
 
 The materialized view reads inserts into `request_facts`. It keeps one candidate
-per request with an input user-message tail that could start a turn. It stores
+per conversation request, including tool-only continuations. It stores
 conversation and request IDs, timestamp, client, a lowercased whitespace-collapsed
 64 KiB search prefix, the cleaned user-message items for Go verification, and
-overflow and slash-command flags. It never stores tool
+overflow, slash-command, and system flags. It also stores the existing bounded
+display projection so page titles never read tool text. The system flag uses the same
+request-kind, source, conversation-suffix, and title-generator rule as the fallback.
+List aggregation and hidden-session checks read this flag without scanning message
+text. Only the selected page loads display text. It never stores tool
 output. A normal view supplies the identical projection for historical backfill.
 The migration test checks that the two projections match.
 
@@ -27,25 +31,45 @@ literal substring search. Imported native history continues through the existing
 
 ## Apply the migration
 
-Use a schema-owner connection after operator approval. Do not execute the whole
+Use the `cliproxy` schema-owner connection after operator approval. The MV runs
+with its creator's rights. Do not execute the whole
 migration file as one batch. Its backfill statement needs parameters and must run
 once for each bounded time slice. The archive reader never creates schema.
 
 1. Run the first three DDL statements in
    [002-turn-search.sql](../migrations/002-turn-search.sql). They create the table,
    the backfill view, and the materialized view. Leave the table marked building.
-2. After the MV exists, record `SELECT max(ingested_at) FROM cliproxy.request_facts`
+   Record the MV creation time and its enclosing UTC hour.
+2. Wait at least 60 seconds after MV creation. Then record `SELECT max(ingested_at) FROM cliproxy.request_facts`
    as the watermark. Inserts after MV creation already reach the table. Backfill
-   overlap can produce duplicate candidates, which search deduplicates.
+   overlap can produce duplicate candidates, which readers deduplicate. The wait
+   covers an insert already running when the MV was created.
 3. Run the parameterized `INSERT ... SELECT` from the migration for consecutive,
-   non-overlapping 15-minute UTC slices covering the history. Bind `from`, `to`,
+   non-overlapping one-hour UTC slices covering the history. Bind `from`, `to`,
    and the captured `watermark`. Run serially and pause at least two seconds
-   between statements. Start with the current seven-day window. Halve a slice
+   between statements. Cover all retained history before activation. Halve a slice
    if it exceeds its 256 MiB memory limit. Do not activate after a partial failure.
-4. For each slice, verify zero missing candidates with the following query,
+4. Backfill the UTC hour containing MV creation again **without the watermark
+   filter**, using the query below. Include the preceding hour if creation is
+   less than 60 seconds after an hour boundary. If in-flight requests can have
+   older `started_at` values, repeat this unfiltered catch-up for all historical
+   slices. Do not assume ingestion time equals request start time.
+5. For each slice, verify zero missing candidates with the following query,
    using the same parameters and query memory limit. Duplicates are harmless.
-5. Run the final `ALTER TABLE ... MODIFY COMMENT` statement to activate lookup.
+6. Run the final `ALTER TABLE ... MODIFY COMMENT` statement to activate lookup.
    Existing readers notice within 30 seconds. Recheck session searches.
+
+```sql
+INSERT INTO cliproxy.turn_search
+SELECT * FROM cliproxy.turn_search_source
+WHERE started_at >= {from:DateTime64(9,'UTC')}
+  AND started_at < {to:DateTime64(9,'UTC')}
+SETTINGS max_threads=1, max_memory_usage=268435456, max_block_size=256,
+ max_insert_block_size=256, min_insert_block_size_rows=256, min_insert_block_size_bytes=0;
+```
+
+Use the following coverage check after each slice. For a creation or catch-up
+slice, remove the entire `request_id IN` watermark clause here as well.
 
 ```sql
 SELECT count() AS missing
@@ -94,8 +118,11 @@ Rollback remains available before or after activation.
 
 ## Roll back
 
+**Drop the MV first.** Dropping its destination while the MV exists breaks
+deriver inserts.
+
 Change the table comment to `archive-turn-search-v1-building`. Wait at least
-30 seconds and allow in-flight three-second searches to finish. Readers then use
+35 seconds so reader caches and in-flight three-second searches can expire. Readers then use
 the original search path. Drop `turn_search_mv`, `turn_search_source`, and
 `turn_search`, in that order, using the statements in the migration. This removes
 only derived search data. No source facts or imported messages change.
@@ -132,24 +159,59 @@ the result qualifies this derived-field workload, not full production insert
 latency or worst-case 8 MiB payloads.
 
 Set `ARCHIVE_TURN_SEARCH_WORK` to the task-owned temporary directory for an
-additional 1.7 GB footprint stop. Both tests stop below 2.5 GB of free disk and
+additional 1.4 GB footprint stop. Both tests stop below 2.5 GB of free disk and
 delete disposable server data through Go test cleanup. Run them serially and
 delete the compressed copy after its measurements.
 
 The [round 9 qualification report](turn-search-benchmark.md) contains the full
 five-run cost matrix, title audit, insert overhead, and measurement limits.
 
-## Upgrade an existing search table
+## Rebuild facts with the search table present
 
-The round 10 projection also keeps user-message tails containing tool results.
-They may be the first request in the reader's window even when `prior_seen` is
-true. The reader verifies the first request by timestamp and request ID and
-excludes later tool continuations.
+Stop capture writers, migrations, blob deletion, and the deriver loop first.
+Keep those inputs stable until the deriver rebuild finishes. Its own body
+validation still applies. The deriver lives in the separate sink repository.
+Its `--rebuild` truncates `request_facts`, not `turn_search`.
 
-The table columns and ready comment are unchanged. To update a previously
-created table, mark it building and wait 33 seconds for readers to fall back.
-Drop only `turn_search_mv` and `turn_search_source`, then run the first three DDL
-statements again. The existing table and its rows remain. Record a new watermark
-and backfill the history again using the updated projection before activation.
-Duplicates do not change search results. This also fills candidates missing
-from the previous projection. Production has not applied this migration yet.
+1. Mark `turn_search` building and wait at least 35 seconds.
+2. Truncate `turn_search` before running `deriver --rebuild`. Keep the MV present
+   so it fills the empty destination from the rebuilt facts.
+3. Run the guard below. A nonzero exit or exception means stop.
+4. Run `deriver --rebuild` and require a successful exit.
+5. Verify zero missing rows over every rebuilt slice with the coverage query
+   above, without its watermark clause. Compare distinct request IDs and check
+   that no old candidates remain. Keep the comment building on any failure.
+6. Mark the table ready, restart the loop and capture, and verify that both
+   `request_facts` and `turn_search` advance.
+
+```sql
+ALTER TABLE cliproxy.turn_search MODIFY COMMENT 'archive-turn-search-v1-building';
+-- Wait >= 35 seconds, with the deriver loop and capture already stopped.
+TRUNCATE TABLE cliproxy.turn_search;
+SELECT throwIf(
+ (SELECT comment FROM system.tables WHERE database='cliproxy' AND name='turn_search')
+   != 'archive-turn-search-v1-building'
+ OR (SELECT count() FROM cliproxy.turn_search) != 0,
+ 'Stop: turn_search must be building and empty before deriver --rebuild');
+```
+
+This is an operator guard, not a change to the separate deriver binary. Do not
+truncate source facts manually. A failed rebuild stays building until repaired.
+
+## Check coverage periodically
+
+Run the missing-count query daily and after a deriver error or restart. Use
+serial one-hour UTC slices, omit the watermark clause, and exclude the latest
+60 seconds so in-flight inserts do not report false gaps. Cover the full retained
+history over the scheduled sweep. Require `missing=0` for every slice. An MV error
+can commit source facts while losing destination rows, and a retry can skip
+already-derived IDs. Mark building on a confirmed gap, backfill the affected
+slices, and recheck coverage before marking ready. Truncation and rebuild require
+the procedure above, not an overlapping refill of stale rows.
+
+## Replace an earlier test schema
+
+Production has not applied 002. Apply the final migration once. An earlier local
+schema lacks `system` and `display_texts` and cannot use this version of the reader. Mark it building,
+wait 35 seconds, drop the MV first, then the source view and destination table.
+Reapply all three DDL statements and perform the full backfill before activation.

@@ -2448,7 +2448,7 @@
       }
       function renderTurnSummary(turn, number) {
         return '<article class="turn-card" onclick="openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))"><div class="turn-primary"><section class="user-message"><h3>' +
-          esc(t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || t("untitled")) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
+          esc(turn.automated ? "Automated step" : t("userRole")) + (turn.continued ? ' <span class="kind-badge">continued</span>' : '') + '</h3><div class="turn-text">' + esc(turn.user_text || (turn.automated ? "Client notification or compaction" : t("untitled"))) + '</div></section><section class="turn-final"><h3>' + esc(t("assistantRole")) + '</h3>' +
           renderFinalAnswer(turn) +
           '</section></div><footer class="turn-footer"><span>' + esc([t("turnNumber", {number: number}), t(turn.requests === 1 ? "stepOne" : "stepsCount", {count: insightNumber(turn.requests || 0, 0)}), turn.model, clockTime(turn.last_at)].filter(Boolean).join(" · ")) +
           '</span><button class="ghost" onclick="event.stopPropagation();openTurn(decodeURIComponent(\'' + jsId(turn.turn_id) + '\'))">' + esc(t("openTurn")) + ' ›</button></footer></article>';
@@ -2491,7 +2491,7 @@
         );
         var turn = page.turn || {};
         turnProcessTotal = page.total || 0;
-        var turnTitle = titleText(turn.user_text);
+        var turnTitle = turn.automated ? "Automated step" : titleText(turn.user_text);
         document.getElementById("turnTitle").textContent =
           turnTitle.length > 100 ? turnTitle.slice(0, 100) + "…" : turnTitle;
         document.getElementById("turnTitle").title = turnTitle;
@@ -2502,9 +2502,9 @@
         ]);
         document.getElementById("turnPrimary").innerHTML =
           '<section class="user-message"><h3>' +
-          esc(t("userRole")) +
+          esc(turn.automated ? "Automated step" : t("userRole")) +
           "</h3>" +
-          renderLazyTurnText(turn.user_text || t("untitled")) +
+          renderLazyTurnText(turn.user_text || (turn.automated ? "Client notification or compaction" : t("untitled"))) +
           '</section><section class="turn-final"><h3>' +
           esc(t("assistantRole")) +
           "</h3>" +

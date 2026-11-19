@@ -28,6 +28,19 @@ func firstUserText(texts []string) (string, bool) {
 	return first, continued
 }
 
+// These transport messages are steps from the client, not prompts from a person.
+func automatedUserItems(texts []string) bool {
+	for _, text := range texts {
+		text = strings.ToLower(strings.TrimSpace(stripUserPreamble(text)))
+		for _, prefix := range []string{"critical: respond with text only", "delegated task node:delegated-task:", "<task-notification>", "<task_notification>"} {
+			if strings.HasPrefix(text, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type displayText struct {
 	RequestID string   `json:"request_id"`
 	Texts     []string `json:"texts"`
@@ -44,6 +57,14 @@ const displayPreambleSQL = `if(startsWith(lowerUTF8(x),'some of the conversation
 
 func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids []string) (map[string]displayText, error) {
 	out := map[string]displayText{}
+	present, err := c.turnSearchExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	table, columns := "request_facts", displayTextColumns
+	if present {
+		table, columns = "turn_search", "display_texts AS texts"
+	}
 	// Eight bounded arrays fit below the reader's result cap even with JSON escaping.
 	for start := 0; start < len(ids); start += 8 {
 		params := url.Values{}
@@ -57,7 +78,7 @@ func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids [
 			keys = append(keys, "{"+key+":String}")
 		}
 		var rows []displayText
-		err := c.query(ctx, `SELECT request_id,`+displayTextColumns+` FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND request_id IN (`+strings.Join(keys, ",")+`) LIMIT 8`, params, &rows)
+		err := c.query(ctx, `SELECT request_id,`+columns+` FROM {db:Identifier}.`+table+` PREWHERE `+timeFilter+` AND request_id IN (`+strings.Join(keys, ",")+`) LIMIT 8`, params, &rows)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +174,11 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 			var hidden []struct {
 				ID string `json:"id"`
 			}
-			err := c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.request_facts PREWHERE `+timeFilter+` AND conversation_id IN (SELECT arrayJoin(JSONExtract({system_candidate_ids:String},'Array(String)'))) AND `+conversationTraffic+` GROUP BY conversation_id HAVING max(`+systemSession+`)`, w.params, &hidden)
+			table, rule, traffic := "request_facts", systemSession, ` AND `+conversationTraffic
+			if present {
+				table, rule, traffic = "turn_search", "system", ""
+			}
+			err := c.query(ctx, `SELECT conversation_id AS id FROM {db:Identifier}.`+table+` PREWHERE `+timeFilter+` AND conversation_id IN (SELECT arrayJoin(JSONExtract({system_candidate_ids:String},'Array(String)')))`+traffic+` GROUP BY conversation_id HAVING max(`+rule+`)`, w.params, &hidden)
 			if err != nil {
 				return nil, err
 			}

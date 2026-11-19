@@ -143,7 +143,7 @@ func TestTurnSearchMigration(t *testing.T) {
 			t.Errorf("missing candidate %s", id)
 		}
 	}
-	for _, id := range []string{"tool", "count"} {
+	for _, id := range []string{"count"} {
 		if ids[id] {
 			t.Errorf("non-turn candidate %s", id)
 		}
