@@ -43,7 +43,7 @@ func TestRound7Regressions(t *testing.T) {
 	old := time.Now().UTC().AddDate(0, 0, -15).Format("2006-01-02 15:04:05.999999999")
 	seed("old-window", []string{"only thirty days finds this older prompt"}, []string{"user"}, map[string]any{"started_at": old, "ingested_at": old})
 	seed("title-generator", []string{"Generate a title that will help the user recognize this T3 Code thread weeks later.", "<skill>Extra instructions</skill>"}, []string{"user", "user"}, nil)
-	seed("long-policy", []string{"<system>Immutable security policy. " + strings.Repeat("injected ", 800) + "</system>Fix the archive titles"}, []string{"user"}, nil)
+	seed("long-policy", []string{"<current_datetime>now</current_datetime>\n<system>Immutable security policy. " + strings.Repeat("injected ", 800) + "</system>Fix the archive titles"}, []string{"user"}, nil)
 	seed("summary-policy", []string{"Some of the conversation history has been summarized to free up context.\n<user_message><system>Policy</system>Keep the actual task</user_message>\n<summary>old</summary>"}, []string{"user"}, nil)
 	seed("real-mention", []string{"Please check Generate a title that will help the user recognize this T3 Code thread"}, []string{"user"}, nil)
 	for _, v := range []struct{ term, id string }{{"regretted the choice", "first-with-tools"}, {"operation on it. ## 1. Connect", "multiline"}, {"operation\non it.  ## 1.\tConnect", "multiline"}} {
@@ -177,7 +177,10 @@ func round7LiveReader(t *testing.T) *clickhouseReader {
 
 func TestRound7LiveTitles(t *testing.T) {
 	c := round7LiveReader(t)
-	cutoff := time.Now().UTC().Format(time.RFC3339Nano)
+	cutoff := os.Getenv("ARCHIVE_R7_TO")
+	if cutoff == "" {
+		cutoff = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	t.Logf("FROZEN_TO %s", cutoff)
 	out, err := c.read("sessions", url.Values{"to": {cutoff}, "days": {"7"}, "limit": {"1000"}, "show_system": {"1"}})
 	if err != nil {
@@ -235,6 +238,16 @@ func TestRound7LiveTitles(t *testing.T) {
 		err  error
 	}
 	pages := map[string]searchPage{}
+	only := map[string]bool{}
+	if raw := os.Getenv("ARCHIVE_R7_ONLY_IDS"); raw != "" {
+		var ids []string
+		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids {
+			only[id] = true
+		}
+	}
 	hits, misses, empty, changed, system := 0, 0, 0, 0, 0
 	for index, r := range rows {
 		if old, ok := before[r.SessionID]; ok && old != r.Summary {
@@ -242,6 +255,9 @@ func TestRound7LiveTitles(t *testing.T) {
 		}
 		if r.System {
 			system++
+			continue
+		}
+		if len(only) > 0 && !only[r.SessionID] {
 			continue
 		}
 		words := strings.Fields(strings.TrimSuffix(r.Summary, "…"))
