@@ -30,6 +30,7 @@ func main() {
 	flag.IntVar(&o.MaxQuarantined, "max-quarantined", 10, "abort when quarantine reaches N; any quarantine exits nonzero")
 	flag.BoolVar(&o.RetryQuarantined, "retry-quarantined", false, "retry only quarantined IDs using the same checkpoint")
 	verify := flag.Bool("verify-sample", false, "read-only byte-exact and live-extractor gate on bounded throwaway sample")
+	flag.BoolVar(&o.DedupFinal, "dedup-final", false, "confirm sink plana.7 body-dedup is enabled permanently before import")
 	flag.Parse()
 	o.URL = os.Getenv("CLICKHOUSE_URL")
 	o.User = os.Getenv("CLICKHOUSE_USER")
@@ -45,7 +46,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "CLICKHOUSE_PASSWORD_FILE is required")
 		os.Exit(1)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	run := chimport.Run
 	if *verify {

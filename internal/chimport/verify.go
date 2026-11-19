@@ -23,7 +23,7 @@ func VerifySample(ctx context.Context, o Options, out io.Writer) error {
 	if err != nil || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != "::1") {
 		return errors.New("verification requires isolated loopback URL")
 	}
-	c := newClient(o.URL, o.User, o.Password)
+	c := newClient(o.URL, o.User, o.Password, "")
 	host, err := c.call(ctx, "SELECT hostName() FORMAT TabSeparated", nil, nil, false)
 	if err != nil {
 		return err

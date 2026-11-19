@@ -114,6 +114,9 @@ func readArchive(ctx context.Context, db *sql.DB, id string) (archive.Record, er
 			return nil, err
 		}
 		b, err := archive.ExpandPayload(manifest, load)
+		if errors.Is(err, archive.ErrUnknownBlobEncoding) {
+			return nil, dataError("unknown blob encoding")
+		}
 		if err != nil {
 			return nil, err
 		}

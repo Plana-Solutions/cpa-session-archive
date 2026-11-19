@@ -3,6 +3,7 @@ package chimport
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -118,7 +119,7 @@ func TestSplitBadInsertAndExceptionCode(t *testing.T) {
 	defer server.Close()
 	rows := [][]byte{[]byte("{\"v\":\"one\"}\n"), []byte("{\"v\":\"bad\"}\n"), []byte("{\"v\":\"two\"}\n")}
 	quarantined := map[int64]string{}
-	n, _, err := newClient(server.URL, "", "").insertSplit(context.Background(), "usage", rows, []int64{1, 2, 3}, func(id int64, why string) error { quarantined[id] = why; return nil })
+	n, _, err := newClient(server.URL, "", "", "test-run").insertSplit(context.Background(), "usage", rows, []int64{1, 2, 3}, func(id int64, why string) error { quarantined[id] = why; return nil })
 	if err != nil || n != 2 || len(quarantined) != 1 || !strings.Contains(quarantined[2], `exception_code="27"`) {
 		t.Fatal(n, err, quarantined)
 	}
@@ -137,7 +138,7 @@ func TestPartsGuardAndUnreservedSpace(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if err := newClient(server.URL, "", "").diskStatus(context.Background(), 0, io.Discard); err == nil {
+	if err := newClient(server.URL, "", "", "test-run").diskStatus(context.Background(), 0, io.Discard); err == nil {
 		t.Fatal("parts guard did not stop")
 	}
 }
@@ -181,7 +182,7 @@ func TestQuarantineBreakerKeepsCheckpoint(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	o := Options{SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1, MaxQuarantined: 1}
+	o := Options{DedupFinal: true, SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1, MaxQuarantined: 1}
 	if err = Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "limit reached") {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestBodyPreloadIntegration(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("isolated ClickHouse required")
 	}
-	c := newClient(endpoint, "default", "")
+	c := newClient(endpoint, "default", "", rand.Text())
 	ctx := context.Background()
 	host, err := c.call(ctx, "SELECT hostName() FORMAT TabSeparated", nil, nil, false)
 	if err != nil || string(host) != "cpa-archive-import-sample\n" {
@@ -230,7 +231,7 @@ func TestBodyPreloadIntegration(t *testing.T) {
 func TestHTTPResponseLimitIsExplicit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "12345") }))
 	defer server.Close()
-	c := newClient(server.URL, "", "")
+	c := newClient(server.URL, "", "", "test-run")
 	c.responseLimit = 4
 	if b, err := c.call(context.Background(), "SELECT 1", nil, nil, false); err == nil || b != nil {
 		t.Fatal("silently truncated response", err)
@@ -303,7 +304,7 @@ func TestBlobPreloadBoundsAndDeduplicatesQueries(t *testing.T) {
 		io.Copy(io.Discard, r.Body)
 	}))
 	defer server.Close()
-	if _, err := newClient(server.URL, "", "").writeBodies(context.Background(), []bodyItems{item, item}); err != nil {
+	if _, err := newClient(server.URL, "", "", "test-run").writeBodies(context.Background(), []bodyItems{item, item}); err != nil {
 		t.Fatal(err)
 	}
 	if queries < 2 || refs != 600 {

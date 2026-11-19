@@ -18,6 +18,7 @@ import (
 
 type client struct {
 	endpoint, user, password string
+	runID                    string
 	http                     *http.Client
 	responseLimit            int64
 }
@@ -89,7 +90,15 @@ func (e httpError) Error() string {
 }
 func badInsert(err error) bool {
 	var e httpError
-	return errors.As(err, &e) && e.status >= 400 && e.status < 500
+	if !errors.As(err, &e) || e.status != http.StatusBadRequest {
+		return false
+	}
+	switch e.code {
+	// ClickHouse input parsing errors; schema and resource failures remain fatal.
+	case "6", "7", "9", "26", "27", "38", "41", "72", "117", "130", "131":
+		return true
+	}
+	return false
 }
 
 func encodeJSON(v any) ([]byte, error) {
@@ -103,6 +112,9 @@ func encodeJSON(v any) ([]byte, error) {
 func (c *client) insert(ctx context.Context, table string, rows [][]byte) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
+	}
+	if c.runID == "" {
+		return 0, errors.New("insert requires a checkpoint run ID")
 	}
 	var buf bytes.Buffer
 	z := gzip.NewWriter(&buf)
@@ -126,7 +138,7 @@ func (c *client) insert(ctx context.Context, table string, rows [][]byte) (int64
 	if table == "body_blobs" {
 		query = "INSERT INTO cliproxy.body_blobs (lineage,hash,data,first_seen) FORMAT RowBinary"
 	}
-	_, err := c.call(ctx, query, url.Values{"insert_deduplication_token": {"archive-v2-" + table + "-" + hex.EncodeToString(sum.Sum(nil))}, "insert_deduplicate": {"1"}}, bytes.NewReader(buf.Bytes()), true)
+	_, err := c.call(ctx, query, url.Values{"insert_deduplication_token": {"archive-v3-" + c.runID + "-" + table + "-" + hex.EncodeToString(sum.Sum(nil))}, "insert_deduplicate": {"1"}}, bytes.NewReader(buf.Bytes()), true)
 	return size, err
 }
 
@@ -157,7 +169,7 @@ func (c *client) insertSplit(ctx context.Context, table string, rows [][]byte, i
 func (c *client) diskStatus(ctx context.Context, minFree uint64, log io.Writer) error {
 	b, err := c.call(ctx, "SELECT min(unreserved_space) AS free FROM system.disks FORMAT JSONEachRow", nil, nil, false)
 	if err != nil {
-		return err
+		return fmt.Errorf("disk preflight requires GRANT SELECT(unreserved_space) ON system.disks: %w", err)
 	}
 	var disk struct {
 		Free uint64 `json:"free"`
@@ -167,7 +179,7 @@ func (c *client) diskStatus(ctx context.Context, minFree uint64, log io.Writer) 
 	}
 	b, err = c.call(ctx, "SELECT table,partition,count() AS parts,sum(bytes_on_disk) AS disk_bytes FROM system.parts WHERE active AND database='cliproxy' GROUP BY table,partition ORDER BY table,partition FORMAT JSONEachRow", nil, nil, false)
 	if err != nil {
-		return err
+		return fmt.Errorf("parts preflight requires GRANT SELECT(database,table,partition,active,bytes_on_disk) ON system.parts: %w", err)
 	}
 	if log != nil {
 		fmt.Fprintf(log, "disk_free_bytes=%d active_parts=%s\n", disk.Free, bytes.TrimSpace(b))
@@ -234,12 +246,19 @@ func (c *client) existing(ctx context.Context, table string, ids []string, lo, h
 	}
 	return out, nil
 }
-func newClient(endpoint, user, password string) *client {
-	return &client{endpoint: endpoint, user: user, password: password, http: &http.Client{Timeout: 3 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+func newClient(endpoint, user, password, runID string) *client {
+	return &client{runID: runID, endpoint: endpoint, user: user, password: password, http: &http.Client{Timeout: 3 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-const externalDDL = `CREATE TABLE IF NOT EXISTS cliproxy.external_messages (
- import_marker LowCardinality(String) DEFAULT 'archive-v1',session_id String,native_session_id String,source LowCardinality(String),project String,title String,
- ts DateTime64(9,'UTC'),position UInt32,role LowCardinality(String),type LowCardinality(String),
- tool_name LowCardinality(String),text String CODEC(ZSTD(3)),ingested_at DateTime64(9,'UTC') DEFAULT now64(9)
-) ENGINE=ReplacingMergeTree(ingested_at) ORDER BY (session_id,position)`
+func (c *client) schemaPreflight(ctx context.Context) error {
+	for _, target := range []struct{ table, columns string }{
+		{"requests", bodyRequestColumns},
+		{"body_blobs", "lineage,hash,data,first_seen"},
+		{"external_messages", "import_marker,session_id,native_session_id,source,project,title,ts,position,role,type,tool_name,text"},
+	} {
+		if _, err := c.call(ctx, "SELECT "+target.columns+" FROM cliproxy."+target.table+" LIMIT 0", nil, nil, false); err != nil {
+			return fmt.Errorf("schema preflight refused cliproxy.%s: deploy the plana.7 dedup schema and external_messages before import: %w", target.table, err)
+		}
+	}
+	return nil
+}

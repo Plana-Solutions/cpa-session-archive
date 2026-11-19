@@ -2,6 +2,7 @@ package chimport
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -32,9 +33,11 @@ type Options struct {
 	FirstID, UpperID                                    int64
 	MaxQuarantined                                      int
 	RetryQuarantined                                    bool
+	DedupFinal                                          bool
 }
 type checkpoint struct {
 	Identity        string `json:"identity"`
+	RunID           string `json:"run_id"`
 	LastID, UpperID int64
 	FirstID         int64
 	ExternalSession string
@@ -101,6 +104,9 @@ func loadState(o Options, db *sql.DB) (checkpoint, error) {
 		if old.Identity != s.Identity {
 			return s, errors.New("state belongs to a different source, target or sample")
 		}
+		if old.RunID == "" {
+			return s, errors.New("checkpoint predates run-scoped deduplication; use a fresh state file")
+		}
 		if old.Quarantine == nil {
 			old.Quarantine = map[int64]string{}
 		}
@@ -131,6 +137,7 @@ func loadState(o Options, db *sql.DB) (checkpoint, error) {
 		}
 	}
 	s.FirstID = s.LastID
+	s.RunID = rand.Text()
 	return s, save(o.State, s)
 }
 func readIDs(ctx context.Context, db *sql.DB, q string, args ...any) (out []item, err error) {
@@ -186,6 +193,9 @@ func validateSources(config, auth string) error {
 	return nil
 }
 func Run(ctx context.Context, o Options) error {
+	if !o.DedupFinal {
+		return errors.New("import requires --dedup-final: confirm sink plana.7 body-dedup is on and will remain on after import")
+	}
 	if o.Batch < 1 || o.Batch > 128 || o.Newest < 0 || o.ExternalSessions < -1 || o.Rate < 0 || o.SQLite == "" || o.State == "" {
 		return errors.New("invalid import options")
 	}
@@ -275,7 +285,10 @@ func Run(ctx context.Context, o Options) error {
 		s.NativePosition = 0
 		s.ExternalDone = false
 	}
-	c := newClient(o.URL, o.User, o.Password)
+	c := newClient(o.URL, o.User, o.Password, s.RunID)
+	if err = c.schemaPreflight(ctx); err != nil {
+		return err
+	}
 	start := time.Now()
 	batchStart := start
 	var rowsN, nativeN, bytesN, skipped int64
@@ -291,6 +304,8 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	s.NoModelSkipped = noModel
+	stopCtx := ctx
+	ctx = context.WithoutCancel(ctx) // Finish and checkpoint the current batch before honoring a stop signal.
 	progress := func(n int, b int64, native bool) error {
 		bytesN += b
 		if native {
@@ -303,9 +318,9 @@ func Run(ctx context.Context, o Options) error {
 			if delay > 0 {
 				timer := time.NewTimer(delay)
 				select {
-				case <-ctx.Done():
+				case <-stopCtx.Done():
 					timer.Stop()
-					return ctx.Err()
+					return stopCtx.Err()
 				case <-timer.C:
 				}
 			}
@@ -319,10 +334,13 @@ func Run(ctx context.Context, o Options) error {
 		return nil
 	}
 	guard := func() error {
+		if err := stopCtx.Err(); err != nil {
+			return err
+		}
 		if batches > 0 && batches%o.DiskCheckBatches == 0 {
 			return c.diskStatus(ctx, o.MinFreeBytes, o.Log)
 		}
-		return ctx.Err()
+		return stopCtx.Err()
 	}
 	readRecord := func(x item) (a archive.Record, err error) {
 		err = retry(ctx, func() error { var e error; a, e = readArchive(ctx, store.DB, x.RequestID); return e })
@@ -505,12 +523,6 @@ func Run(ctx context.Context, o Options) error {
 	}
 	if o.ExternalSessions == -1 || s.ExternalDone {
 		return finish()
-	}
-	if _, err = c.call(ctx, externalDDL, nil, nil, false); err != nil {
-		return err
-	}
-	if _, err = c.call(ctx, "ALTER TABLE cliproxy.external_messages ADD COLUMN IF NOT EXISTS import_marker LowCardinality(String) DEFAULT ''", nil, nil, false); err != nil {
-		return err
 	}
 	// Session keys are immutable. A fresh state file reconciles all previously imported positions.
 	query := "SELECT 0,id,'' FROM external_sessions WHERE id>? ORDER BY id"

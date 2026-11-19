@@ -95,7 +95,7 @@ func TestRetries(t *testing.T) {
 		io.WriteString(w, "ok")
 	}))
 	defer server.Close()
-	c := newClient(server.URL, "", "")
+	c := newClient(server.URL, "", "", "test-run")
 	b, err := c.call(context.Background(), "SELECT 1", nil, strings.NewReader("same body"), false)
 	if err != nil || string(b) != "ok" || n != 3 {
 		t.Fatal("transport retry", err, n)
@@ -207,7 +207,7 @@ func runFixture(t *testing.T, pace bool) {
 		}
 	}))
 	defer server.Close()
-	o := Options{SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1}
+	o := Options{DedupFinal: true, SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1}
 	if pace {
 		o.Rate = 20
 		o.ExternalSessions = -1
@@ -308,7 +308,7 @@ func TestDiskGuard(t *testing.T) {
 	}))
 	defer server.Close()
 	var log bytes.Buffer
-	if err := newClient(server.URL, "", "").diskStatus(context.Background(), 101, &log); err == nil {
+	if err := newClient(server.URL, "", "", "test-run").diskStatus(context.Background(), 101, &log); err == nil {
 		t.Fatal("disk guard allowed low free space")
 	}
 	if calls != 2 || !strings.Contains(log.String(), "disk_free_bytes=100") {
