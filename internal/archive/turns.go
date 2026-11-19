@@ -302,7 +302,7 @@ func normalizeTurnSummary(value string) string {
 }
 
 func cleanTurnText(value string) string {
-	value = strings.TrimSpace(unescapeDisplayText(value))
+	value = stripUserPreamble(strings.TrimSpace(unescapeDisplayText(value)))
 	lower := strings.ToLower(value)
 	for _, prefix := range []string{"## my request for codex:", "# my request for codex:", "my request for codex:"} {
 		if strings.HasPrefix(lower, prefix) {

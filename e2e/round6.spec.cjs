@@ -26,6 +26,7 @@ test('export download reports skipped incomplete records', async ({ page }) => {
   await page.route('**/export?*', route => route.fulfill({json: {
     content: '', skipped_incomplete: 1, done: true, filename: 'test.jsonl', content_type: 'application/x-ndjson',
   }}));
+  page.once('dialog', dialog => dialog.accept());
   await page.evaluate(() => { document.documentElement.lang='en'; applyI18n(); return downloadExport('all'); });
   await expect(page.locator('#allDownloadNotice')).toContainText('Skipped 1 incomplete records');
 });

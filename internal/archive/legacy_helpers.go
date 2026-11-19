@@ -406,8 +406,41 @@ var t3ContextBlock = regexp.MustCompile(`(?is)<t3_context\b[^>]*>.*?</t3_context
 var assistantQuotePrefix = regexp.MustCompile(`(?i)^\[Assistant quote\]\((t3-citation://[^)]*)\)\s*`)
 var slashCommandTag = regexp.MustCompile(`(?is)<command-(name|args|message)>(.*?)</command-(?:name|args|message)>`)
 
+func stripUserPreamble(value string) string {
+	for {
+		lower := strings.ToLower(value)
+		if strings.HasPrefix(lower, "some of the conversation history has been summarized") {
+			start := strings.Index(lower, "<user_message>")
+			if start < 0 {
+				return ""
+			}
+			value = value[start+len("<user_message>"):]
+			if end := strings.Index(strings.ToLower(value), "</user_message>"); end >= 0 {
+				value = value[:end]
+			}
+			value = strings.TrimSpace(value)
+			continue
+		}
+		stripped := false
+		for _, tag := range []string{"system", "developer"} {
+			if strings.HasPrefix(lower, "<"+tag+">") {
+				end := strings.Index(lower, "</"+tag+">")
+				if end < 0 {
+					return ""
+				}
+				value = strings.TrimSpace(value[end+len(tag)+3:])
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			return value
+		}
+	}
+}
+
 func meaningfulUserText(value string) string {
-	value = strings.TrimSpace(html.UnescapeString(value))
+	value = stripUserPreamble(strings.TrimSpace(html.UnescapeString(value)))
 	value = strings.TrimSpace(t3ContextBlock.ReplaceAllString(value, ""))
 	comments := []string{}
 	for {

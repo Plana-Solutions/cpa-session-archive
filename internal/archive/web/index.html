@@ -1057,7 +1057,7 @@
             </div>
           </details>
         </div>
-        <div><label><input id="showSystemSessions" type="checkbox" onchange="loadSessions()" /> <span data-i18n="showSystemSessions"></span></label></div>
+        <div><label><span data-i18n="searchWindow"></span> <select id="sessionSearchDays" onchange="loadSessions()"><option value="7" data-i18n="search7Days"></option><option value="30" data-i18n="search30Days"></option><option value="90" data-i18n="search90Days"></option><option value="365" data-i18n="search365Days"></option></select></label> <label><input id="showSystemSessions" type="checkbox" onchange="loadSessions()" /> <span data-i18n="showSystemSessions"></span></label></div>
         <div id="activeFilters" class="active-filters"></div>
         <section class="sessions-panel">
           <div class="section-head">
@@ -1262,7 +1262,13 @@
           backToRequest: "← 返回本次请求",
           exportSession: "下载当前 Session",
           exportAll: "下载全库",
-          exportLimit: "每次下载最多 64 MiB。",
+          searchWindow: "搜索范围",
+          search7Days: "最近 7 天",
+          search30Days: "最近 30 天",
+          search90Days: "最近 90 天",
+          search365Days: "最近 365 天",
+          exportConfirm: "全库导出可能超过浏览器的 64 MiB 上限。SFT 也受此限制。较大的归档请打开会话并下载单个 Session。仍要尝试全库导出吗？",
+          exportLimit: "浏览器每次下载最多 64 MiB。较大的归档请下载单个会话。",
           archiveFormat: "无损归档 JSONL",
           sftFormat: "后训练 SFT JSONL",
           newestFirst: "最新优先",
@@ -1275,7 +1281,7 @@
           loadingFull: "正在后台还原完整用户命令…",
           fullUnavailable: "暂时无法还原完整内容，请稍后重试。",
           loadingRequest: "正在按需加载完整请求、响应和工具结果…",
-          exportTooLarge: "导出超过 64 MiB 下载上限。请导出单个会话或选择 SFT 格式。",
+          exportTooLarge: "导出超过 64 MiB 下载上限。请打开会话并下载单个 Session。",
           loadingExport: "正在准备可重复下载的流式链接…",
           firstPage: "首页",
           previousPage: "上一页",
@@ -1436,7 +1442,13 @@
           backToRequest: "← Back to this request",
           exportSession: "Download this session",
           exportAll: "Download all sessions",
-          exportLimit: "Downloads are limited to 64 MiB each.",
+          searchWindow: "Search window",
+          search7Days: "Last 7 days",
+          search30Days: "Last 30 days",
+          search90Days: "Last 90 days",
+          search365Days: "Last 365 days",
+          exportConfirm: "All-session exports may exceed the browser's 64 MiB limit, including SFT. For larger archives, open a session and use Download this session. Try exporting all sessions anyway?",
+          exportLimit: "Browser downloads are limited to 64 MiB. For larger archives, download individual sessions.",
           archiveFormat: "Lossless archive JSONL",
           sftFormat: "Post-training SFT JSONL",
           newestFirst: "Newest first",
@@ -1451,7 +1463,7 @@
           fullUnavailable: "Complete content is temporarily unavailable. Try again shortly.",
           loadingRequest:
             "Loading the full request, response and tool results on demand…",
-          exportTooLarge: "Export exceeds the 64 MiB download limit. Export individual sessions or choose SFT format.",
+          exportTooLarge: "Export exceeds the 64 MiB download limit. Open a session and use Download this session.",
           loadingExport: "Preparing a reusable streaming download link…",
           firstPage: "First",
           previousPage: "Previous",
@@ -2250,7 +2262,7 @@
         q.set("limit", appliedLimit);
         if(document.getElementById("showSystemSessions").checked) q.set("show_system", "1");
  q.set("search_client",searchClient);
-        if (sessionList.query) q.set("q", sessionList.query);
+        if (sessionList.query) { q.set("q", sessionList.query); q.set("days", document.getElementById("sessionSearchDays").value); }
         var rows;
  try { rows = await api(
           "/sessions?" + q,
@@ -2859,6 +2871,7 @@
         );
       }
       async function downloadExport(scope) {
+        if (scope === "all" && !confirm(t("exportConfirm"))) return;
         var format =
           document.getElementById(
             scope === "all" ? "allExportFormat" : "sessionExportFormat",

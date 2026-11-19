@@ -35,7 +35,10 @@ type displayText struct {
 
 const userTextItems = `arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32)`
 
-const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),` + userTextItems + `) AS texts`
+const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),arrayMap(x->` + displayPreambleSQL + `,` + userTextItems + `)) AS texts`
+
+// Remove wrappers before truncation so a long injected policy cannot hide the prompt.
+const displayPreambleSQL = `replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(x,'(?is)^Some of the conversation history has been summarized.*?<user_message>\\s*',''),'(?is)</user_message>.*$',''),'(?is)^\\s*(?:<system>.*?</system>\\s*|<developer>.*?</developer>\\s*)+','')`
 
 func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids []string) (map[string]displayText, error) {
 	out := map[string]displayText{}
@@ -63,11 +66,13 @@ func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids [
 	return out, nil
 }
 
-const searchTextMatch = `arrayExists(x->positionCaseInsensitiveUTF8(replaceRegexpAll(decodeHTMLComponent(x),'(?is)<t3_context[^>]*>.*?</t3_context>',''),{search:String})>0
- OR (position(x,'t3-citation://')>0 AND positionCaseInsensitiveUTF8(decodeURLComponent(replaceAll(x,'+',' ')),{search:String})>0)
+const searchWhitespacePattern = `'[\\s\\x{000b}\\x{0085}\\x{00a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+'`
+
+const searchTextMatch = `arrayExists(x->positionCaseInsensitiveUTF8(replaceRegexpAll(replaceRegexpAll(decodeHTMLComponent(x),'(?is)<t3_context[^>]*>.*?</t3_context>',''),` + searchWhitespacePattern + `,' '),{search:String})>0
+ OR (position(x,'t3-citation://')>0 AND positionCaseInsensitiveUTF8(replaceRegexpAll(decodeURLComponent(replaceAll(x,'+',' ')),` + searchWhitespacePattern + `,' '),{search:String})>0)
  OR (startsWith({search:String},'/') AND position(x,'<command-name>')>0),` + userTextItems + `)`
 
-const searchTurnStart = `(NOT ` + sideCall + ` AND NOT ` + tailHasTool + ` AND ` + tailHasUser + `)`
+const searchTurnStart = `(NOT ` + sideCall + ` AND (NOT prior_seen OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
 
 // Search the most recently active candidates first. Common terms stop at the page;
 // rare terms expand the candidate set. Titles and search share the same cleanup.
@@ -188,7 +193,7 @@ func (c *clickhouseReader) matchingConversations(ctx context.Context, w readWind
 				}
 			}
 			text, _ := firstUserText(items)
-			if !found[row.ID] && strings.Contains(strings.ToLower(text), strings.ToLower(p.Get("search"))) {
+			if !found[row.ID] && strings.Contains(strings.ToLower(strings.Join(strings.Fields(text), " ")), strings.ToLower(p.Get("search"))) {
 				found[row.ID] = true
 				ids = append(ids, row.ID)
 			}

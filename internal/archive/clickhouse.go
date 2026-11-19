@@ -240,8 +240,10 @@ func (c *clickhouseReader) readContext(parent context.Context, endpoint string, 
 		return nil, ctx.Err()
 	}
 	days := 365
-	if endpoint == "insights" || (endpoint == "sessions" && q.Get("q") != "") {
+	if endpoint == "insights" {
 		days = 30
+	} else if search {
+		days = 7
 	}
 	w, err := windowFor(q, days)
 	if err != nil {
@@ -288,7 +290,7 @@ const factsWithUsage = `FROM {db:Identifier}.request_facts AS f LEFT JOIN
  WHERE u.requested_at >= {from:DateTime64(9,'UTC')} AND u.requested_at < {to:DateTime64(9,'UTC')} + INTERVAL 1 HOUR
  GROUP BY lifecycle_request_id) AS u ON f.request_id=u.lifecycle_request_id`
 
-const systemSession = `(kind='compact' OR (request_kind!='' AND request_kind!='turn') OR thread_source='system' OR endsWith(conversation_id,':compaction') OR startsWith(last_user_text,'Generate a title that will help the user recognize this T3 Code thread') OR startsWith(last_user_text,'You generate concise git branch names.') OR startsWith(last_user_text,'You are performing a CONTEXT CHECKPOINT COMPACTION.'))`
+const systemSession = `(kind='compact' OR (request_kind!='' AND request_kind!='turn') OR thread_source='system' OR endsWith(conversation_id,':compaction') OR arrayExists((x,d,r,t)->d='input' AND r='user' AND t='message' AND (startsWith(x,'Generate a title that will help the user recognize this T3 Code thread') OR startsWith(x,'You generate concise git branch names.') OR startsWith(x,'You are performing a CONTEXT CHECKPOINT COMPACTION.')),msg_text,msg_direction,msg_role,msg_type))`
 
 type archiveSession struct {
 	System       bool      `json:"system,omitempty"`
@@ -338,7 +340,7 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 		filters = strings.Replace(filters, ` AND requested_model={model_requested:String}`, "", 1)
 	}
 	if q.Get("q") != "" {
-		w.params.Set("search", q.Get("q"))
+		w.params.Set("search", strings.Join(strings.Fields(q.Get("q")), " "))
 		ids, err := c.searchSessions(ctx, w, source, filters, pageMatches(w.params))
 		if err != nil {
 			return nil, err
@@ -382,7 +384,7 @@ func (c *clickhouseReader) sessions(ctx context.Context, w readWindow, q url.Val
 			ef += ` AND 0`
 		}
 		if q.Get("q") != "" {
-			ef += ` AND ((role='user' AND positionCaseInsensitiveUTF8(text,{search:String})>0) OR positionCaseInsensitiveUTF8(title,{search:String})>0 OR positionCaseInsensitiveUTF8(session_id,{search:String})>0 OR positionCaseInsensitiveUTF8(project,{search:String})>0 OR positionCaseInsensitiveUTF8(source,{search:String})>0)`
+			ef += ` AND ((role='user' AND positionCaseInsensitiveUTF8(replaceRegexpAll(text,` + searchWhitespacePattern + `,' '),{search:String})>0) OR positionCaseInsensitiveUTF8(replaceRegexpAll(title,` + searchWhitespacePattern + `,' '),{search:String})>0 OR positionCaseInsensitiveUTF8(session_id,{search:String})>0 OR positionCaseInsensitiveUTF8(project,{search:String})>0 OR positionCaseInsensitiveUTF8(source,{search:String})>0)`
 		}
 		sql += ` UNION ALL SELECT false,concat('external:',session_id),substringUTF8(argMin(title,position),1,200),any(project),'','',any(source),count(),min(ts),max(ts),toInt64(0),toInt64(0),toInt64(0),'external-local-history',any(source) FROM {db:Identifier}.external_messages FINAL WHERE ts >= {from:DateTime64(9,'UTC')} AND ts < {to:DateTime64(9,'UTC')} AND session_id IN (SELECT session_id FROM {db:Identifier}.external_messages FINAL WHERE ` + ef + `) GROUP BY session_id`
 	}

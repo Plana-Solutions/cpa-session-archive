@@ -74,6 +74,9 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 	}
 	ticket := map[string]any{"filename": name, "content_type": "application/x-ndjson", "content": "", "done": len(sessions) == 0, "next_offset": offset, "next_byte_offset": 0, "next_session_offset": sessionIndex, "from": w.from.Format(time.RFC3339Nano), "to": w.to.Format(time.RFC3339Nano)}
 	if len(sessions) == 0 {
+		if part > 0 {
+			return nil, badQuery("export session disappeared while continuing a record; restart the export")
+		}
 		return ticket, nil
 	}
 	id := sessions[0].ID
@@ -169,6 +172,9 @@ func (c *clickhouseReader) export(ctx context.Context, w readWindow, q url.Value
 		return ticket, nil
 	}
 	if endSession {
+		if part > 0 {
+			return nil, badQuery("export record disappeared while continuing; restart the export")
+		}
 		if format == "sft" && strings.HasPrefix(id, "external:") && offset > 0 {
 			ticket["content"] = "]}\n"
 		}

@@ -104,7 +104,7 @@ test("bounded session export exposes a reusable JSONL download", async ({
   page,
 }) => {
   const exportError = new Promise((resolve, reject) => {
-    page.on("dialog", async dialog => { const message = dialog.message(); await dialog.dismiss(); reject(new Error(message)); });
+    page.on("dialog", async dialog => { if(dialog.type() === "confirm") {await dialog.accept(); return;} const message = dialog.message(); await dialog.dismiss(); reject(new Error(message)); });
     page.on("pageerror", reject);
   });
   await page.locator(".session-row").first().click();
@@ -380,9 +380,10 @@ test("downloads stop at the memory cap with a clear error", async ({page}) => {
     await route.fulfill({json: {filename: "large.jsonl", content: "x".repeat(33 * 1024 * 1024),
       next_offset: calls, done: false}});
   });
-  const dialog = page.waitForEvent("dialog");
+  const dialog = page.waitForEvent("dialog", dialog => dialog.type() === "alert");
   await page.locator(".archive-actions > summary").click();
   await expect(page.locator(".archive-actions .export-controls")).toContainText("64 MiB");
+  page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", {name:"下载全库"}).click();
   const error = await dialog;
   expect(error.message()).toContain("64 MiB");
