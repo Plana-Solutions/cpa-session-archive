@@ -117,7 +117,7 @@ func TestRound11Acceptance(t *testing.T) {
 	var sessions []struct {
 		ID string `json:"id"`
 	}
-	if err := c.query(context.Background(), `SELECT DISTINCT conversation_id AS id FROM cliproxy.request_facts WHERE startsWith(conversation_id,'claude:5fbcb359')`, nil, &sessions); err != nil {
+	if err := c.query(context.Background(), `SELECT DISTINCT conversation_id AS id FROM cliproxy.request_facts WHERE startsWith(conversation_id,'claude:5fbcb359') AND position(conversation_id,':agent:')=0`, nil, &sessions); err != nil {
 		t.Fatal(err)
 	}
 	for _, session := range sessions {
