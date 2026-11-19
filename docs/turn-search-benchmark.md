@@ -4,7 +4,7 @@ All 989 non-empty visible titles were found with zero timeouts. The compact path
 
 ## Search change
 
-The old reader expanded a candidate prefix and switched to full-window verification above 640 candidates. A common term with hidden or non-matching candidates could reach that path on page six. The reader now walks 80 conversations at a time with a keyset cursor over descending last activity and ascending conversation ID. It preserves timestamp ties, hidden-session exclusion, exact Go verification, the public pagination API, and the three-second deadline. It accumulates matches without rereading earlier candidate text within that request. Public offset pages still rebuild the required prefix.
+The old reader expanded a candidate prefix and switched to full-window verification above 640 candidates. A common term with hidden or non-matching candidates could reach that path on page six. The compact reader now walks 80 conversations at a time with a keyset cursor over descending last activity and ascending conversation ID. It preserves timestamp ties, hidden-session exclusion, exact Go verification, the public pagination API, and the three-second deadline. It accumulates matches without rereading earlier candidate text within that request. Public offset pages still rebuild the required prefix. Without the compact table, the reader keeps a recent-candidate fast path and bulk verification for sparse terms, preserving the existing bounded-request regression.
 
 Five sequential unprofiled page-six probes on the same frozen copy are below. These separate before/after blocks were not interleaved. They are diagnostic observations, not a qualified percentage speedup. The separate profiler run is excluded.
 
@@ -34,30 +34,30 @@ The live copy spans about one day, so the seven- and thirty-day windows contain 
 
 | Dataset | Days | Term | Path | Read rows, median [min, max] | Read MB, median [min, max] | Seconds, median [min, max] | Completed |
 | --- | ---: | --- | --- | ---: | ---: | ---: | ---: |
-| live | 7 | absent | fallback | 363,864 [258,720, 372,253] | 86.387 [22.911, 86.699] | 3.000 [2.633, 3.001] | 2/5 |
-| live | 7 | absent | compact | 50,099 [50,099, 50,099] | 3.437 [3.437, 3.437] | 0.173 [0.143, 0.345] | 5/5 |
-| live | 7 | rare | fallback | 369,081 [338,774, 411,941] | 132.870 [118.450, 212.612] | 3.001 [2.726, 3.001] | 1/5 |
-| live | 7 | rare | compact | 84,691 [84,691, 84,692] | 128.841 [128.841, 128.841] | 0.280 [0.213, 0.663] | 5/5 |
-| live | 7 | common | fallback | 100,660 [100,660, 100,660] | 177.789 [177.789, 177.789] | 0.744 [0.536, 1.339] | 5/5 |
-| live | 7 | common | compact | 105,765 [105,765, 105,765] | 188.619 [188.619, 188.619] | 0.330 [0.267, 0.517] | 5/5 |
-| live | 30 | absent | fallback | 352,303 [291,146, 372,252] | 75.172 [40.052, 86.699] | 3.000 [1.797, 3.001] | 2/5 |
-| live | 30 | absent | compact | 50,099 [50,099, 50,099] | 3.437 [3.437, 3.437] | 0.151 [0.100, 0.318] | 5/5 |
-| live | 30 | rare | fallback | 411,941 [338,774, 411,941] | 212.612 [118.450, 212.612] | 2.597 [1.894, 3.001] | 3/5 |
-| live | 30 | rare | compact | 84,691 [84,691, 84,691] | 128.841 [128.841, 128.841] | 0.353 [0.212, 0.466] | 5/5 |
-| live | 30 | common | fallback | 100,660 [100,660, 100,660] | 177.789 [177.789, 177.789] | 0.813 [0.546, 1.175] | 5/5 |
-| live | 30 | common | compact | 105,765 [105,765, 105,765] | 188.619 [188.619, 188.619] | 0.470 [0.254, 0.759] | 5/5 |
-| synthetic | 7 | absent | fallback | 708,181 [708,181, 708,182] | 84.705 [84.705, 84.705] | 2.465 [1.838, 2.979] | 5/5 |
-| synthetic | 7 | absent | compact | 14,803 [14,803, 14,803] | 0.296 [0.296, 0.296] | 0.015 [0.011, 0.017] | 5/5 |
-| synthetic | 7 | rare | fallback | 753,797 [614,037, 753,797] | 106.240 [76.007, 106.240] | 2.754 [1.845, 3.001] | 3/5 |
-| synthetic | 7 | rare | compact | 93,793 [93,793, 93,793] | 22.599 [22.599, 22.599] | 0.097 [0.081, 0.169] | 5/5 |
-| synthetic | 7 | common | fallback | 107,522 [107,522, 107,522] | 55.303 [55.303, 55.303] | 0.335 [0.305, 0.645] | 5/5 |
-| synthetic | 7 | common | compact | 99,883 [99,883, 99,883] | 47.824 [47.824, 47.824] | 0.139 [0.088, 0.357] | 5/5 |
-| synthetic | 30 | absent | fallback | 1,210,374 [665,043, 1,756,590] | 62.228 [32.796, 90.705] | 3.001 [3.000, 3.001] | 0/5 |
-| synthetic | 30 | absent | compact | 60,000 [60,000, 60,001] | 1.187 [1.187, 1.187] | 0.043 [0.013, 0.044] | 5/5 |
-| synthetic | 30 | rare | fallback | 1,148,599 [603,267, 1,512,153] | 62.012 [32.553, 81.500] | 3.001 [3.001, 3.001] | 0/5 |
-| synthetic | 30 | rare | compact | 372,143 [372,143, 372,144] | 28.528 [28.528, 28.528] | 0.182 [0.134, 0.248] | 5/5 |
-| synthetic | 30 | common | fallback | 423,901 [423,901, 423,901] | 63.457 [63.457, 63.457] | 0.688 [0.568, 1.524] | 5/5 |
-| synthetic | 30 | common | compact | 385,902 [385,902, 385,902] | 56.562 [56.562, 56.562] | 0.235 [0.155, 0.283] | 5/5 |
+| live | 7 | absent | fallback | 58,717 [58,717, 58,718] | 66.797 [66.797, 66.797] | 1.211 [1.170, 1.231] | 5/5 |
+| live | 7 | absent | compact | 50,099 [50,099, 50,099] | 3.438 [3.438, 3.438] | 0.095 [0.094, 0.110] | 5/5 |
+| live | 7 | rare | fallback | 88,407 [88,407, 88,407] | 123.080 [123.080, 123.080] | 1.243 [1.223, 1.277] | 5/5 |
+| live | 7 | rare | compact | 83,081 [83,081, 83,082] | 112.007 [112.007, 112.007] | 0.177 [0.175, 0.232] | 5/5 |
+| live | 7 | common | fallback | 100,660 [100,660, 100,660] | 164.214 [164.214, 164.214] | 0.473 [0.471, 0.477] | 5/5 |
+| live | 7 | common | compact | 105,765 [105,765, 105,765] | 175.793 [175.793, 175.793] | 0.210 [0.206, 0.231] | 5/5 |
+| live | 30 | absent | fallback | 58,717 [58,717, 58,717] | 66.797 [66.797, 66.797] | 1.170 [1.169, 1.221] | 5/5 |
+| live | 30 | absent | compact | 50,099 [50,099, 50,099] | 3.438 [3.438, 3.438] | 0.096 [0.094, 0.096] | 5/5 |
+| live | 30 | rare | fallback | 88,407 [88,407, 88,407] | 123.080 [123.080, 123.080] | 1.248 [1.225, 1.268] | 5/5 |
+| live | 30 | rare | compact | 83,081 [83,081, 83,081] | 112.007 [112.007, 112.007] | 0.178 [0.176, 0.185] | 5/5 |
+| live | 30 | common | fallback | 100,660 [100,660, 100,660] | 164.214 [164.214, 164.214] | 0.476 [0.472, 0.499] | 5/5 |
+| live | 30 | common | compact | 105,765 [105,765, 105,765] | 175.793 [175.793, 175.793] | 0.208 [0.206, 0.251] | 5/5 |
+| synthetic | 7 | absent | fallback | 90,298 [90,298, 90,299] | 74.000 [74.000, 74.000] | 1.113 [1.102, 1.133] | 5/5 |
+| synthetic | 7 | absent | compact | 14,803 [14,803, 14,803] | 0.296 [0.296, 0.296] | 0.010 [0.010, 0.012] | 5/5 |
+| synthetic | 7 | rare | fallback | 150,698 [150,698, 150,699] | 95.619 [95.619, 95.619] | 1.159 [1.151, 1.196] | 5/5 |
+| synthetic | 7 | rare | compact | 93,763 [93,763, 93,763] | 22.263 [22.263, 22.263] | 0.058 [0.055, 0.093] | 5/5 |
+| synthetic | 7 | common | fallback | 107,472 [107,472, 107,472] | 58.292 [58.292, 58.292] | 0.188 [0.183, 0.202] | 5/5 |
+| synthetic | 7 | common | compact | 99,833 [99,833, 99,833] | 47.268 [47.268, 47.268] | 0.076 [0.075, 0.095] | 5/5 |
+| synthetic | 30 | absent | fallback | 181,480 [181,480, 181,480] | 10.631 [10.631, 10.631] | 3.001 [3.001, 3.001] | 0/5 |
+| synthetic | 30 | absent | compact | 60,000 [60,000, 60,000] | 1.187 [1.187, 1.187] | 0.012 [0.011, 0.014] | 5/5 |
+| synthetic | 30 | rare | fallback | 301,482 [301,482, 301,482] | 20.119 [20.119, 20.119] | 3.001 [3.000, 3.001] | 0/5 |
+| synthetic | 30 | rare | compact | 372,113 [372,113, 372,113] | 28.192 [28.192, 28.192] | 0.104 [0.103, 0.109] | 5/5 |
+| synthetic | 30 | common | fallback | 423,851 [423,851, 423,851] | 66.445 [66.445, 66.445] | 0.426 [0.420, 0.436] | 5/5 |
+| synthetic | 30 | common | compact | 385,852 [385,852, 385,852] | 56.006 [56.006, 56.006] | 0.130 [0.126, 0.134] | 5/5 |
 
 ## Final MV insert overhead
 
@@ -80,10 +80,10 @@ Rollback is covered by the deep-page regression. It marks the table building, ex
 
 The shared local binary is ClickHouse 26.11.1.2737 on a ten-core Mac. The measured server had an absolute 1.5 GiB cap, four background workers, server-wide merge_max_block_size=256, max_bytes_to_merge_at_max_space_in_pool=2147483648, and no query_log table. Its host-memory ratio remained 0.9; the smaller absolute cap controls this host. Production has a 2 GB container with a 0.75 server ratio. Reader queries use one thread and a 512 MiB query cap. A separate baseline sample captured MergeTree array/string deserialization and ZSTD decompression. It is qualitative evidence of text verification work, not a stable CPU ceiling. Other agents and desktop apps shared this Mac. Load averages were approximately three to five during the run.
 
-Each dataset ran alone and was deleted immediately after measuring. The private compressed copy was deleted after the live run. The footprint guard stops at 1.7 GB in the task-owned work directory, leaving margin below the 2 GB task limit, and stops below 2.5 GB free. Observed work-directory samples during the acceptance measurements stayed below 200 MB. Shared binaries, caches, and other agents were preserved.
+Each dataset ran alone and was deleted immediately after measuring. The private compressed copy was deleted after the live run. The footprint guard stops at 1.7 GB in the task-owned work directory, leaving margin below the 2 GB task limit, and stops below 2.5 GB free. Observed work-directory samples stayed below 200 MB. Shared binaries, caches, and other agents were preserved.
 
 ## Retained first failures
 
-The first copy attempted a current cutoff. Seven late derivations arrived during its scan, so its count check failed, 8,559 versus 8,552. Filtering that copy to the older round-8 cutoff yielded exactly 8,388 facts, independently matched by a read-only production count. The discarded later rows were not part of the accepted snapshot. A separate profiled baseline probe timed out under instrumentation; its timing is excluded. The first synthetic seed stopped on a footprint-walk error before cost samples. The guard now tolerates a file disappearing during du, which can happen during merges, but retains unexpected-error and disk-limit stops. The rerun completed.
+The first copy attempted a current cutoff. Seven late derivations arrived during its scan, so its count check failed, 8,559 versus 8,552. Filtering that copy to the older round-8 cutoff yielded exactly 8,388 facts, independently matched by a read-only production count. The discarded later rows were not part of the accepted snapshot. A separate profiled baseline probe timed out under instrumentation; its timing is excluded. The first synthetic seed stopped on a footprint-walk error before cost samples. The guard now tolerates a file disappearing during du, which can happen during merges, but retains unexpected-error and disk-limit stops. The rerun completed. The first full local Go suite then caught a fallback request-budget regression, 33 requests followed by a deadline. The fallback-only correction restores bulk verification after the recent prefix. The 20,000-row absent and final-row-match regression passed with seven HTTP requests each, alongside migration, deep-page, and rollback tests. Both five-run matrices were refreshed after that correction. The compact audit and MV measurements exercise unchanged code paths.
 
 Raw per-run output and the private per-session audit remain under ~/.p3stack/runs/cpa-session-archive/pr4-round9-evidence/. No production schema or configuration change, deploy, release, tag, merge, request-body fetch, or PR #5 modification occurred.

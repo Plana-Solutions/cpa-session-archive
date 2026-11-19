@@ -2,7 +2,7 @@
 
 The archive searches `cliproxy.turn_search` when its table comment is
 `archive-turn-search-v1-ready`. Otherwise it uses the existing request-facts
-search. Presence is checked at most once per 30 seconds. Candidate verification
+search. Presence is checked at most once per 30 seconds. Compact candidate verification
 walks 80 conversations at a time by descending activity time and ascending ID.
 The next batch seeks past the previous batch, including timestamp ties. Short
 terms remain supported. Deep pages no longer switch to full-window text

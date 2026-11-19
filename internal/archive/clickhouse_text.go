@@ -179,6 +179,9 @@ func (c *clickhouseReader) searchSessions(ctx context.Context, w readWindow, sou
 		if len(ids) >= wanted || len(candidates) < size {
 			return ids[:min(len(ids), wanted)], nil
 		}
+		if !present {
+			return c.matchingConversations(ctx, w, timeFilter+` AND `+conversationTraffic+` AND conversation_id!='' AND `+searchTurnStart, 1000000, false)
+		}
 		last := candidates[len(candidates)-1]
 		w.params.Set("candidate_before", last.Hi)
 		w.params.Set("candidate_after_id", last.ID)
