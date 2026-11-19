@@ -38,7 +38,9 @@ const userTextItems = `arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' 
 const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),arrayMap(x->` + displayPreambleSQL + `,` + userTextItems + `)) AS texts`
 
 // Remove wrappers before truncation so a long injected policy cannot hide the prompt.
-const displayPreambleSQL = `replaceRegexpOne(replaceRegexpOne(replaceRegexpOne(x,'(?is)^Some of the conversation history has been summarized.*?<user_message>\\s*',''),'(?is)</user_message>.*$',''),'(?is)^\\s*(?:<current_datetime>.*?</current_datetime>\\s*|<system>.*?</system>\\s*|<developer>.*?</developer>\\s*)+','')`
+const displayPolicyPattern = `'(?is)^\\s*(?:<current_datetime>.*?</current_datetime>\\s*|<system>.*?</system>\\s*|<developer>.*?</developer>\\s*)+'`
+const displayPolicySQL = `replaceRegexpOne(x,` + displayPolicyPattern + `,'')`
+const displayPreambleSQL = `if(startsWith(lowerUTF8(x),'some of the conversation history has been summarized'),arrayFirst(t->trimBoth(t)!='',arrayMap(x->` + displayPolicySQL + `,extractAll(x,'(?is)<user_message>(.*?)</user_message>'))),` + displayPolicySQL + `)`
 
 func (c *clickhouseReader) displayTexts(ctx context.Context, w readWindow, ids []string) (map[string]displayText, error) {
 	out := map[string]displayText{}

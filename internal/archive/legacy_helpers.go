@@ -406,23 +406,21 @@ var t3ContextBlock = regexp.MustCompile(`(?is)<t3_context\b[^>]*>.*?</t3_context
 var assistantQuotePrefix = regexp.MustCompile(`(?i)^\[Assistant quote\]\((t3-citation://[^)]*)\)\s*`)
 var slashCommandTag = regexp.MustCompile(`(?is)<command-(name|args|message)>(.*?)</command-(?:name|args|message)>`)
 
+var compactedUserMessages = regexp.MustCompile(`(?is)<user_message>(.*?)</user_message>`)
+
 func stripUserPreamble(value string) string {
 	for {
 		lower := strings.ToLower(value)
 		if strings.HasPrefix(lower, "some of the conversation history has been summarized") {
-			start := strings.Index(lower, "<user_message>")
-			if start < 0 {
-				return ""
+			for _, message := range compactedUserMessages.FindAllStringSubmatch(value, -1) {
+				if text := stripUserPreamble(strings.TrimSpace(message[1])); text != "" {
+					return text
+				}
 			}
-			value = value[start+len("<user_message>"):]
-			if end := strings.Index(strings.ToLower(value), "</user_message>"); end >= 0 {
-				value = value[:end]
-			}
-			value = strings.TrimSpace(value)
-			continue
+			return ""
 		}
 		stripped := false
-		for _, tag := range []string{"system", "developer"} {
+		for _, tag := range []string{"current_datetime", "system", "developer"} {
 			if strings.HasPrefix(lower, "<"+tag+">") {
 				end := strings.Index(lower, "</"+tag+">")
 				if end < 0 {

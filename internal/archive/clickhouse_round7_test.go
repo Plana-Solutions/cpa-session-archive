@@ -44,7 +44,7 @@ func TestRound7Regressions(t *testing.T) {
 	seed("old-window", []string{"only thirty days finds this older prompt"}, []string{"user"}, map[string]any{"started_at": old, "ingested_at": old})
 	seed("title-generator", []string{"Generate a title that will help the user recognize this T3 Code thread weeks later.", "<skill>Extra instructions</skill>"}, []string{"user", "user"}, nil)
 	seed("long-policy", []string{"<current_datetime>now</current_datetime>\n<system>Immutable security policy. " + strings.Repeat("injected ", 800) + "</system>Fix the archive titles"}, []string{"user"}, nil)
-	seed("summary-policy", []string{"Some of the conversation history has been summarized to free up context.\n<user_message><system>Policy</system>Keep the actual task</user_message>\n<summary>old</summary>"}, []string{"user"}, nil)
+	seed("summary-policy", []string{"Some of the conversation history has been summarized to free up context.\n<user_message><current_datetime>now</current_datetime><system>Policy only</system></user_message>\n<user_message><system>Policy</system>Keep the actual task</user_message>\n<summary>old</summary>"}, []string{"user"}, nil)
 	seed("real-mention", []string{"Please check Generate a title that will help the user recognize this T3 Code thread"}, []string{"user"}, nil)
 	for _, v := range []struct{ term, id string }{{"regretted the choice", "first-with-tools"}, {"operation on it. ## 1. Connect", "multiline"}, {"operation\non it.  ## 1.\tConnect", "multiline"}} {
 		t.Run(v.id+v.term, func(t *testing.T) {
@@ -151,6 +151,7 @@ func TestRound7Regressions(t *testing.T) {
 
 func TestRound7Preambles(t *testing.T) {
 	for _, v := range []struct{ raw, want string }{
+		{"Some of the conversation history has been summarized to free up context.\n<user_message><current_datetime>now</current_datetime><system>Policy only</system></user_message>\n<user_message><system>Policy</system>Keep the actual task</user_message>", "Keep the actual task"},
 		{"Some of the conversation history has been summarized to free up context.\nYou were originally given instructions. Here were the user messages:\n<user_message>\nFix the archive titles\n</user_message>\nHere is a summary: private", "Fix the archive titles"},
 		{"<system>Immutable security policy. " + strings.Repeat("injected ", 800) + "</system>\nFix the archive titles", "Fix the archive titles"},
 		{"Some of the conversation history has been summarized to free up context.\n<user_message><system>Immutable security policy.</system>Fix the archive titles</user_message>\n<summary>old</summary>", "Fix the archive titles"},
