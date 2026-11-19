@@ -76,7 +76,7 @@ def identities_match(expected, derived):
 
 def filtered(table, field, values):
     columns = [r["name"] for r in rows("SELECT name FROM system.columns WHERE database='cliproxy' AND table='" + table + "' ORDER BY position FORMAT JSONEachRow")]
-    assert columns and all(re.fullmatch(r"[a-z_]+", c) for c in columns)
+    assert columns and all(re.fullmatch(r"[a-z_][a-z0-9_]*", c) for c in columns)
     suffix = " FINAL" if table == "external_messages" else ""
     projection = {"body_sha256": "hex(body_sha256) AS body_sha256", "body_refs": "arrayMap(x -> hex(x),body_refs) AS body_refs", "body_residual": "base64Encode(body_residual) AS body_residual"} if table == "requests" else {}
     selection = [projection.get(c,c) for c in columns]
@@ -146,6 +146,7 @@ gate = identities_match(expected, derived)
 shared = set(live) & set(facts)
 live_mismatches = sum(live[rid]["conversation_id"] != facts[rid] for rid in shared)
 expected_mismatches = sum(expected_rows[rid]["conversation_id"] != facts.get(rid) for rid in ids)
+gate = gate and expected_mismatches == 0 and live_mismatches == 0
 if os.environ.get("REQUIRE_LIVE_OVERLAP") == "1":
     assert shared, "sample has no live overlap"
 

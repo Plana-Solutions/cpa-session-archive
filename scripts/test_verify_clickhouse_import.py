@@ -1,4 +1,5 @@
 import ast
+import re
 import pathlib
 import os
 import subprocess
@@ -23,6 +24,17 @@ class IdentityGateTest(unittest.TestCase):
     def test_split_and_merge(self):
         self.assertFalse(self.gate({"a": {"a", "b"}}, {"a": {"a"}, "b": {"a"}}))
         self.assertFalse(self.gate({"a": {"a"}, "b": {"a"}}, {"a": {"a", "b"}}))
+
+    def test_dedup_column_identifiers(self):
+        source = ast.parse(pathlib.Path(__file__).with_name("verify_clickhouse_import.py").read_text())
+        fn = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == "filtered")
+        columns = ["request_id", "body_sha256", "body_ref_offsets"]
+        namespace = {"re": re, "rows": lambda query: [{"name": c} for c in columns]}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "columns", "exec"), namespace)
+        self.assertEqual(list(namespace["filtered"]("requests", "request_id", [])), [])
+        columns.append("invalid;column")
+        with self.assertRaises(AssertionError):
+            list(namespace["filtered"]("requests", "request_id", []))
 
     def test_production_url_refused(self):
         env = dict(os.environ, CLICKHOUSE_URL="http://100.127.160.51:8123")
