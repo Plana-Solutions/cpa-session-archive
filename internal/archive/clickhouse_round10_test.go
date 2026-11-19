@@ -181,3 +181,20 @@ func TestRound10NativeToolSFT(t *testing.T) {
 		t.Fatalf("invalid tool pairs exported: %s", content)
 	}
 }
+
+func TestRound10NativeSFTRequiresAssistantEnding(t *testing.T) {
+	c := turnSearchFixture(t)
+	chExec(t, c, "ALTER TABLE cliproxy.external_messages ADD COLUMN call_id String")
+	at := time.Now().UTC().Add(-time.Hour).Format("2006-01-02 15:04:05.999999999")
+	for i, role := range []string{"user", "tool_call", "tool_result"} {
+		text := "event-" + role
+		if role == "tool_call" {
+			text = `{"command":"pwd"}`
+		}
+		chInsert(t, c, "external_messages", map[string]any{"session_id": "tool-ending", "ts": at, "position": i, "role": role, "type": role, "call_id": fmt.Sprint(i > 0), "tool_name": "shell", "text": text})
+	}
+	content, _ := collectExport(t, c, url.Values{"id": {"external:tool-ending"}, "format": {"sft"}})
+	if content != "" {
+		t.Fatalf("training sample ended with a tool result: %s", content)
+	}
+}
