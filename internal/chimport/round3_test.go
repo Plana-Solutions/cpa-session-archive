@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -60,17 +61,55 @@ func TestBodyRedactedBeforeSplit(t *testing.T) {
 	expected := []byte(row.RequestBody)
 	b := splitBody(&row, a.SessionID)
 	got, err := bodystore.Join(b.sk, b.blobs)
-	if err != nil || !bytes.Equal(got, expected) || bytes.Contains(got, []byte(secret)) || row.RequestBody != string(expected) {
+	if err != nil || !bytes.Equal(got, expected) || bytes.Contains(got, []byte(secret)) || row.RequestBody != "" {
 		t.Fatal("body roundtrip/redaction")
 	}
+	restored := bodystore.Body{Lineage: b.lineage, Length: b.sk.Length, SHA: hex.EncodeToString(b.sk.SHA256[:]), Residual: b.sk.Residual, Offsets: b.sk.Offsets}
+	for _, h := range b.sk.Refs {
+		restored.Refs = append(restored.Refs, hex.EncodeToString(h[:]))
+	}
+	blobs := map[bodystore.Key][]byte{}
+	for h, blob := range b.blobs {
+		blobs[bodystore.Key{Lineage: b.lineage, Hash: h}] = blob
+	}
+	deriverBody, err := restored.Restore(blobs)
+	if err != nil || !bytes.Equal(deriverBody, expected) {
+		t.Fatal("deriver body restore")
+	}
+	row.RequestBody = string(deriverBody)
 	f := extract.Extract(extractRow(row), false)
 	if len(f.Messages) == 0 || f.LastUserText == "" {
-		t.Fatal("deriver lost inline body after split")
+		t.Fatal("deriver lost restored body")
 	}
 	for _, blob := range b.blobs {
 		if bytes.Contains(blob, []byte(secret)) {
 			t.Fatal("unredacted blob")
 		}
+	}
+}
+
+func TestBodyZeroLineageMatchesSink(t *testing.T) {
+	row := requestRow{RequestBody: `{"messages":[{"role":"user","content":"zero lineage"}]}`, StartedAt: "2026-11-18 12:00:00.000000000"}
+	item := splitBody(&row, "session-only-fallback-must-not-change-lineage")
+	if item.lineage != 0 || row.RequestBody != "" {
+		t.Fatalf("lineage=%d request_body=%q", item.lineage, row.RequestBody)
+	}
+	if _, err := bodystore.Join(item.sk, item.blobs); err != nil {
+		t.Fatal(err)
+	}
+	inserted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		if strings.HasPrefix(q, "INSERT INTO cliproxy.body_blobs") {
+			inserted = true
+		}
+	}))
+	defer server.Close()
+	if _, err := newClient(server.URL, "", "", "test-run").writeBodies(context.Background(), []bodyItems{item}); err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("zero-lineage blob was skipped")
 	}
 }
 
