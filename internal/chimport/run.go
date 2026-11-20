@@ -53,6 +53,14 @@ type item struct {
 	StartedAt string
 }
 
+const requestPath = `lower(COALESCE(json_extract(metadata_json,'$.request_path'),(SELECT value FROM record_facets WHERE record_facets.request_id=records.request_id AND record_facets.name='request.path' LIMIT 1),''))`
+
+// Auxiliary endpoints do not represent model conversations. Other model-less
+// rows remain importable so the archive preserves real chat calls.
+const modelLessAuxiliary = `(source_format IN ('models','embeddings') OR ` + requestPath + ` LIKE '%count_tokens%' OR ` + requestPath + ` LIKE '%counttokens%' OR ` + requestPath + ` LIKE '%/models%' OR ` + requestPath + ` LIKE '%/embeddings%' OR ` + requestPath + ` LIKE '%embedcontent%')`
+const importableProxyRows = `source_format!='external-native-event' AND ((COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'') OR NOT ` + modelLessAuxiliary + `)`
+const skippedModelLessRows = `source_format!='external-native-event' AND COALESCE(model,'')='' AND COALESCE(requested_model,'')='' AND ` + modelLessAuxiliary
+
 func openReadOnly(path string) (*archive.Store, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -295,7 +303,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	var noModel int64
 	err = retry(ctx, func() error {
-		return store.DB.QueryRowContext(ctx, "SELECT count(*) FROM records WHERE id>? AND id<=? AND source_format!='external-native-event' AND COALESCE(model,'')='' AND COALESCE(requested_model,'')=''", s.FirstID, s.UpperID).Scan(&noModel)
+		return store.DB.QueryRowContext(ctx, "SELECT count(*) FROM records WHERE id>? AND id<=? AND "+skippedModelLessRows, s.FirstID, s.UpperID).Scan(&noModel)
 	})
 	if err != nil {
 		return err
@@ -360,7 +368,7 @@ func Run(ctx context.Context, o Options) error {
 		if err = guard(); err != nil {
 			return err
 		}
-		ids, err := readIDs(ctx, store.DB, "SELECT id,request_id,started_at FROM records WHERE id>? AND id<=? AND source_format!='external-native-event' AND (COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'')"+retryFilter+" ORDER BY id LIMIT ?", s.LastID, s.UpperID, o.Batch)
+		ids, err := readIDs(ctx, store.DB, "SELECT id,request_id,started_at FROM records WHERE id>? AND id<=? AND "+importableProxyRows+retryFilter+" ORDER BY id LIMIT ?", s.LastID, s.UpperID, o.Batch)
 		if err != nil {
 			return err
 		}

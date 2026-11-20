@@ -39,7 +39,7 @@ const turnColumns = `f.request_id AS turn_id,conversation_id AS session_id,subst
 
 const conversationTraffic = `kind NOT IN ('count_tokens','models','embeddings')`
 const tailHasTool = `arrayExists((d,r)->d='input' AND r='tool',msg_direction,msg_role)`
-const tailHasUser = `arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type)`
+const tailHasUser = `(arrayExists((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type) OR last_user_text!='')`
 const sideCallShape = `(prior_seen AND input_items=2 AND length(tools_offered)<=1 AND previous_response_id=''
  AND arrayExists((d,r)->d='input' AND r='system',msg_direction,msg_role) AND ` + tailHasUser + `
  AND system_prompt_hash!=0 AND (conversation_id,system_prompt_hash) NOT IN
@@ -48,7 +48,7 @@ const sideCallShape = `(prior_seen AND input_items=2 AND length(tools_offered)<=
 const sideCall = `(turn_id='' AND ` + sideCallShape + `)`
 const groupedSideCall = `(f.turn_id='' AND ` + sideCallShape + `)`
 const turnStart = `(NOT ` + sideCall + ` AND (rn=1 OR (NOT ` + tailHasTool + ` AND ` + tailHasUser + `)))`
-const turnUserText = `arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type)`
+const turnUserText = `if(length(arrayFilter((d,r,t)->d='input' AND r='user' AND t='message',msg_direction,msg_role,msg_type))>0,arrayFirst((text,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),last_user_text)`
 
 // Keep turn identity shared by lists, detail and exports. A tool-result tail continues a Claude turn even when it includes user text.
 const numberedTurns = `WITH steps AS (

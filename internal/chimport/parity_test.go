@@ -133,6 +133,7 @@ func runFixture(t *testing.T, pace bool) {
 	c.RequestID = "no-model"
 	c.Model = ""
 	c.RequestedModel = ""
+	c.Metadata = map[string]any{"request_path": "/v1/messages/count_tokens"}
 	d := a
 	d.RequestID = "large"
 	d.OriginalRequest = []byte(`{"input":"` + strings.Repeat("z", 8000) + `"}`)
@@ -383,4 +384,33 @@ func decodeRequests(t *testing.T, raw []byte) []json.RawMessage {
 		out = append(out, b)
 	}
 	return out
+}
+
+func TestModelLessClassification(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE records(request_id TEXT,source_format TEXT,model TEXT,requested_model TEXT,metadata_json TEXT); CREATE TABLE record_facets(request_id TEXT,name TEXT,value TEXT)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO records VALUES
+		('chat','claude','','','{"request_path":"/v1/messages"}'),
+		('tokens','claude','','','{"request_path":"/v1/messages/count_tokens"}'),
+		('model-list','models','','','{}')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var importable, skipped int
+	if err = db.QueryRow(`SELECT count(*) FROM records WHERE ` + importableProxyRows).Scan(&importable); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM records WHERE ` + skippedModelLessRows).Scan(&skipped); err != nil {
+		t.Fatal(err)
+	}
+	if importable != 1 || skipped != 2 {
+		t.Fatalf("importable=%d skipped=%d", importable, skipped)
+	}
 }
