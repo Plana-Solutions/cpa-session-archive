@@ -151,7 +151,7 @@ func TestResumeOverlapAndPartialBatch(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	o := Options{DedupFinal: true, SQLite: dbPath, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 2, ExternalSessions: -1}
+	o := Options{SQLite: dbPath, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 2, ExternalSessions: -1}
 	if err = Run(context.Background(), o); err == nil {
 		t.Fatal("expected interrupted usage insert")
 	}

@@ -139,6 +139,9 @@ func runFixture(t *testing.T, pace bool) {
 	if err = s.PutBatch([]archive.Record{a, b, c, d}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.DB.Exec("UPDATE records SET original_ref='' WHERE request_id='req1'"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.DB.Exec("UPDATE records SET started_at='invalid' WHERE request_id='bad'"); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +210,7 @@ func runFixture(t *testing.T, pace bool) {
 		}
 	}))
 	defer server.Close()
-	o := Options{DedupFinal: true, SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1}
+	o := Options{SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1}
 	if pace {
 		o.Rate = 20
 		o.ExternalSessions = -1
@@ -252,7 +255,7 @@ func runFixture(t *testing.T, pace bool) {
 	ro, _ := openReadOnly(path)
 	defer ro.DB.Close()
 	state, err := loadState(o, ro.DB)
-	if err != nil || state.NoModelSkipped != 1 || len(state.Quarantine) != 1 || insertCalls != 2 || len(requests) != 2 || state.LastID != state.UpperID {
+	if err != nil || state.NoModelSkipped != 1 || state.NoOriginalRef != 1 || len(state.Quarantine) != 1 || insertCalls != 2 || len(requests) != 2 || state.LastID != state.UpperID {
 		t.Fatal("quarantine/skip/batch mismatch", err, state, insertCalls, len(requests))
 	}
 	fix, err := sql.Open("sqlite3", path)

@@ -3,6 +3,7 @@ package chimport
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mattn/go-sqlite3"
@@ -27,7 +28,11 @@ func retry(ctx context.Context, f func() error) error {
 		if err == nil || attempt == 3 || (!sqliteBusy(err) && !errors.As(err, &transient)) {
 			return err
 		}
-		timer := time.NewTimer(250 * time.Millisecond << attempt)
+		delay := 250 * time.Millisecond << attempt
+		if strings.Contains(transient.Error(), `exception_code="241"`) || strings.Contains(transient.Error(), `exception_code="252"`) {
+			delay = 5 * time.Second << min(attempt, 3)
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

@@ -182,7 +182,7 @@ func TestQuarantineBreakerKeepsCheckpoint(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	o := Options{DedupFinal: true, SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1, MaxQuarantined: 1}
+	o := Options{SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1, MaxQuarantined: 1}
 	if err = Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "limit reached") {
 		t.Fatal(err)
 	}

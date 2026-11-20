@@ -91,7 +91,7 @@ func TestSchemaAndGrantRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Run(context.Background(), Options{}); err == nil || !strings.Contains(err.Error(), "--dedup-final") {
+	if err := Run(context.Background(), Options{Batch: 0}); err == nil || !strings.Contains(err.Error(), "invalid import options") {
 		t.Fatal(err)
 	}
 }
@@ -140,7 +140,7 @@ func TestStopFinishesBatchAndCheckpoints(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	o := Options{DedupFinal: true, SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1}
+	o := Options{SQLite: path, State: filepath.Join(dir, "state"), URL: server.URL, Config: cfg, AuthDir: dir, Batch: 16, ExternalSessions: -1}
 	if err = Run(ctx, o); err != context.Canceled {
 		t.Fatal(err)
 	}

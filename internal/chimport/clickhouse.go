@@ -68,11 +68,12 @@ func (c *client) call(ctx context.Context, q string, params url.Values, body io.
 		if err != nil {
 			return transientError{"ClickHouse read failed"}
 		}
-		if resp.StatusCode >= 500 {
-			return transientError{fmt.Sprintf("ClickHouse HTTP %d exception_code=%q (details suppressed)", resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code"))}
+		code := resp.Header.Get("X-ClickHouse-Exception-Code")
+		if resp.StatusCode >= 500 || code == "241" || code == "252" {
+			return transientError{fmt.Sprintf("ClickHouse HTTP %d exception_code=%q (details suppressed)", resp.StatusCode, code)}
 		}
 		if resp.StatusCode != 200 {
-			return httpError{resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code")}
+			return httpError{resp.StatusCode, code}
 		}
 		result = b
 		return nil
@@ -257,7 +258,7 @@ func (c *client) schemaPreflight(ctx context.Context) error {
 		{"external_messages", "import_marker,session_id,native_session_id,source,project,title,ts,position,role,type,tool_name,text"},
 	} {
 		if _, err := c.call(ctx, "SELECT "+target.columns+" FROM cliproxy."+target.table+" LIMIT 0", nil, nil, false); err != nil {
-			return fmt.Errorf("schema preflight refused cliproxy.%s: deploy the plana.7 dedup schema and external_messages before import: %w", target.table, err)
+			return fmt.Errorf("schema preflight refused cliproxy.%s: deploy the v0.1.0-plana.9 dedup schema and external_messages before import: %w", target.table, err)
 		}
 	}
 	return nil

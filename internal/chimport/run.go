@@ -33,7 +33,6 @@ type Options struct {
 	FirstID, UpperID                                    int64
 	MaxQuarantined                                      int
 	RetryQuarantined                                    bool
-	DedupFinal                                          bool
 }
 type checkpoint struct {
 	Identity        string `json:"identity"`
@@ -44,7 +43,8 @@ type checkpoint struct {
 	ExternalDone    bool
 	NativeLastID    int64
 	NativePosition  uint32
-	NoModelSkipped  int64
+	NoModelSkipped  int64 `json:"no_model_skipped"`
+	NoOriginalRef   int64 `json:"no_original_ref"`
 	Quarantine      map[int64]string
 }
 type item struct {
@@ -193,9 +193,6 @@ func validateSources(config, auth string) error {
 	return nil
 }
 func Run(ctx context.Context, o Options) error {
-	if !o.DedupFinal {
-		return errors.New("import requires --dedup-final: confirm sink plana.7 body-dedup is on and will remain on after import")
-	}
 	if o.Batch < 1 || o.Batch > 128 || o.Newest < 0 || o.ExternalSessions < -1 || o.Rate < 0 || o.SQLite == "" || o.State == "" {
 		return errors.New("invalid import options")
 	}
@@ -304,6 +301,19 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	s.NoModelSkipped = noModel
+	var noOriginalRef int64
+	err = retry(ctx, func() error {
+		var e error
+		e = store.DB.QueryRowContext(ctx, "SELECT count(*) FROM records WHERE id>? AND id<=? AND source_format!='external-native-event' AND COALESCE(original_ref,'')=''", s.FirstID, s.UpperID).Scan(&noOriginalRef)
+		return e
+	})
+	if err != nil {
+		return err
+	}
+	s.NoOriginalRef = noOriginalRef
+	if o.Log != nil {
+		fmt.Fprintf(o.Log, "source_no_original_ref=%d source_no_model=%d\n", s.NoOriginalRef, s.NoModelSkipped)
+	}
 	stopCtx := ctx
 	ctx = context.WithoutCancel(ctx) // Finish and checkpoint the current batch before honoring a stop signal.
 	progress := func(n int, b int64, native bool) error {
@@ -327,7 +337,7 @@ func Run(ctx context.Context, o Options) error {
 		}
 		if o.Log != nil {
 			elapsed := time.Since(start).Seconds()
-			fmt.Fprintf(o.Log, "proxy_rows=%d native_events=%d skipped_existing=%d skipped_no_model=%d quarantined=%d last_id=%d rows/s=%.2f MB/s=%.2f elapsed=%s\n", rowsN, nativeN, skipped, s.NoModelSkipped, len(s.Quarantine), s.LastID, float64(rowsN+nativeN)/elapsed, float64(bytesN)/1e6/elapsed, time.Since(start).Round(time.Millisecond))
+			fmt.Fprintf(o.Log, "proxy_rows=%d native_events=%d skipped_existing=%d skipped_no_model=%d no_original_ref=%d quarantined=%d last_id=%d rows/s=%.2f MB/s=%.2f elapsed=%s\n", rowsN, nativeN, skipped, s.NoModelSkipped, s.NoOriginalRef, len(s.Quarantine), s.LastID, float64(rowsN+nativeN)/elapsed, float64(bytesN)/1e6/elapsed, time.Since(start).Round(time.Millisecond))
 		}
 		batchStart = time.Now()
 		batches++
