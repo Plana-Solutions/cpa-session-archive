@@ -46,7 +46,7 @@ type displayText struct {
 	Texts     []string `json:"texts"`
 }
 
-const userTextItems = `arrayConcat(arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32),if(last_user_text='',[],[last_user_text]))`
+const userTextItems = `arraySlice(arrayFilter((x,d,r,t)->d='input' AND r='user' AND t='message',msg_text,msg_direction,msg_role,msg_type),1,32)`
 
 const displayTextColumns = `arrayMap(x->if(length(x)<=4000,x,concat(substring(x,1,2000),'\n',substring(x,-2000))),arrayMap(x->` + displayPreambleSQL + `,` + userTextItems + `)) AS texts`
 

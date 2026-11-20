@@ -50,7 +50,9 @@ func TestBodyRedactedBeforeSplit(t *testing.T) {
 	r, _ := redact.New()
 	r.Configure([]string{cfg}, nil)
 	a := fixture(t)
-	a.OriginalRequest = []byte(`{ "messages": [ {"content":"` + secret + `"}],"tail":"<&>" }`)
+	a.SourceFormat = "claude"
+	a.Metadata["request_path"] = "/v1/messages"
+	a.OriginalRequest = []byte(`{ "messages": [ {"role":"user","content":"` + secret + `"}],"tail":"<&>" }`)
 	row, _, err := mapRecord(a, r)
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +60,12 @@ func TestBodyRedactedBeforeSplit(t *testing.T) {
 	expected := []byte(row.RequestBody)
 	b := splitBody(&row, a.SessionID)
 	got, err := bodystore.Join(b.sk, b.blobs)
-	if err != nil || !bytes.Equal(got, expected) || bytes.Contains(got, []byte(secret)) || row.RequestBody != "" {
+	if err != nil || !bytes.Equal(got, expected) || bytes.Contains(got, []byte(secret)) || row.RequestBody != string(expected) {
 		t.Fatal("body roundtrip/redaction")
+	}
+	f := extract.Extract(extractRow(row), false)
+	if len(f.Messages) == 0 || f.LastUserText == "" {
+		t.Fatal("deriver lost inline body after split")
 	}
 	for _, blob := range b.blobs {
 		if bytes.Contains(blob, []byte(secret)) {

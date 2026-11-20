@@ -31,7 +31,7 @@ func splitBody(row *requestRow, session string) bodyItems {
 		lineage = bodystore.LineageKey("archive:" + session)
 	}
 	ts, _ := time.Parse(timeLayout, row.StartedAt)
-	row.RequestBody = ""
+	// Keep the redacted inline body because the plana.9 deriver reads request_body directly.
 	return bodyItems{lineage, sk, blobs, ts}
 }
 

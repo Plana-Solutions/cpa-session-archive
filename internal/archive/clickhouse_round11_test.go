@@ -27,7 +27,6 @@ func TestRound11SystemAndAutomation(t *testing.T) {
 		at = at.Add(time.Second)
 	}
 	seed("human", "ordinary", "Fix the notification labels", nil)
-	seed("imported-tail", "ordinary", "", map[string]any{"last_user_text": "Imported prompt survives tail projection", "msg_direction": []string{}, "msg_role": []string{}, "msg_type": []string{}, "msg_text": []string{}})
 	for i, text := range []string{
 		"CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.",
 		"Delegated task node:delegated-task:command%3Amcp%3Adelegate-task (Audit) [completed]:\nThere are few real findings.",
@@ -88,16 +87,10 @@ func TestRound11SystemAndAutomation(t *testing.T) {
 		t.Fatal(err)
 	}
 	turns := out.(map[string]any)["turns"].([]clickhouseTurn)
-	if len(turns) != 6 || turns[0].Automated || turns[0].UserText != "Fix the notification labels" {
+	if len(turns) != 5 || turns[0].Automated || turns[0].UserText != "Fix the notification labels" {
 		t.Fatalf("turns %+v", turns)
 	}
 	for _, turn := range turns[1:] {
-		if turn.TurnID == "imported-tail" {
-			if turn.Automated || turn.UserText != "Imported prompt survives tail projection" {
-				t.Fatalf("imported prompt lost %+v", turn)
-			}
-			continue
-		}
 		if !turn.Automated || turn.UserText != "" {
 			t.Fatalf("automated turn shown as prompt %+v", turn)
 		}
