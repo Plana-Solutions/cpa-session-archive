@@ -23,24 +23,18 @@ type bodyItems struct {
 	ts      time.Time
 }
 
-func splitBody(row *requestRow, session string) bodyItems {
+func splitBody(row *requestRow, _ string) bodyItems {
 	body := []byte(row.RequestBody)
 	sk, blobs := bodystore.Split(body)
 	lineage := bodystore.Lineage(row.RequestHeaders, body)
-	if lineage == 0 && session != "" {
-		lineage = bodystore.LineageKey("archive:" + session)
-	}
 	ts, _ := time.Parse(timeLayout, row.StartedAt)
-	// Keep the redacted inline body because the plana.9 deriver reads request_body directly.
+	row.RequestBody = ""
 	return bodyItems{lineage, sk, blobs, ts}
 }
 
 func (c *client) writeBodies(ctx context.Context, items []bodyItems) (int64, error) {
 	known := map[bodystore.Key]bool{}
 	for _, item := range items {
-		if item.lineage == 0 {
-			continue
-		}
 		sentinel := bodystore.Key{Lineage: item.lineage}
 		if known[sentinel] {
 			continue
