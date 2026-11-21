@@ -27,6 +27,7 @@ jobs:
           echo "CLICKHOUSE_BINARY=/tmp/clickhouse" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: go test -tags gore2regex ./internal/chimport
+      - run: IMPORT_PROCEDURE_DOCKER=1 python3 -m unittest scripts/test_clickhouse_import_procedure.py
       - run: go test -race ./internal/archive -run '^(TestSerializedExport|TestExportCacheConcurrency)'
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps --only-shell chromium
