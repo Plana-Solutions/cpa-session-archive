@@ -1,6 +1,6 @@
 # Import a settled SQLite archive into ClickHouse
 
-Build with `-tags gore2regex` (required by the CLI) to use gitleaks’ linear-time RE2 engine with the same rules. Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and deriver `v0.1.0-plana.12`, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
+Build with `-tags gore2regex` (required by the CLI) to use gitleaks’ linear-time RE2 engine with the same rules. Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and the `v0.1.0-plana.12` deriver, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
 
 The importer opens SQLite with `mode=ro`, `query_only`, and a one-second busy timeout. It closes each ID cursor before loading payloads. For the full import, retire the collector and read its static file directly, or use a settled `sqlite3 .backup` copy on a mounted volume. Keep that file and its path unchanged across resumes. Only one importer may use a checkpoint or target at a time.
 
@@ -10,7 +10,7 @@ The importer opens SQLite with `mode=ro`, `query_only`, and a one-second busy ti
 2. Deploy sink `plana.9` with deriver `v0.1.0-plana.12` with `body-dedup: true` and PR #4's compatible bodystore readers. The importer writes request skeletons and shared `body_blobs` directly. Require deriver lag near zero, the reviewed approximately 2 GiB merge cap, `merge_max_block_size=256`, and the disk and active-parts budget.
 3. Keep body deduplication enabled for the whole import and afterward. Do not run `restore-bodies` after import because it expands imported skeletons into large inline bodies.
 4. Provision `external_messages` and the grants below through the normal operator procedure. The importer does not create or alter tables. Its startup probes refuse missing request dedup columns, `body_blobs`, or `external_messages` before any insert.
-5. Pass both isolated sample gates, review the final commit, and verify the ARM64 binary digest recorded in the round-4 evidence.
+5. Pass both isolated sample gates, review the final commit, and verify the ARM64 binary digest recorded below.
 6. Retire the collector and verify the static source as below, or prepare the backup volume. Keep the source path and file unchanged across resumes.
 
 Production now uses ClickHouse 25.8.33.6 with a 2 GiB container, memory ratio `0.75`, and a 64 MiB mark cache. Its small-host server profile sets `background_schedule_pool_size=16`, `background_buffer_flush_schedule_pool_size=2`, `background_message_broker_schedule_pool_size=1`, `background_distributed_schedule_pool_size=1`, `background_move_pool_size=1`, `background_fetches_pool_size=1`, `background_common_pool_size=2`, `max_thread_pool_free_size=16`, `async_insert_threads=2`, and `memory_worker_purge_dirty_pages_threshold_ratio=0.05`. The reported thread count fell from about 650 to 80. These settings and deriver `v0.1.0-plana.12`, which fixes a stalled backlog checkpoint, supersede the round-6 runtime configuration. Rehearse both together to pass the memory gate above. The 1.2 GiB watchdog measures cgroup anon bytes, not `docker stats`.
@@ -108,7 +108,7 @@ Delete fetched traffic, snapshot samples, credentials copied for the test, and d
 
 ## Verify the ARM64 artifact
 
-The round-4 Linux ARM64 binary sha256 is `abe2a3370002f8e9dc88aec40f67c0e83fc88fc56f55c74754e6d18ec7b64794`.
+The round-12 Linux ARM64 RE2 binary sha256 is `972e675e0395d48c0c19c86a7889a2a7089dd2d5be43ea2e47576e67c2baa705`, built from source `59313a0`. Later changes through `d79d0f1` affect only this guide and its Python procedure test.
 Build the final reviewed source with Go `1.26.11`, CGO enabled, and these reproducible flags.
 
 ```sh
@@ -117,13 +117,13 @@ CGO_ENABLED=1 GOMAXPROCS=1 go build -tags gore2regex -trimpath -buildvcs=false \
 sha256sum cpa-archive-clickhouse-import
 ```
 
-Use the existing cluster `golang:1.26-bookworm` image and shared Go caches in a disposable container. The round-4 evidence records the final source commit and independently rebuilt digest. A different compiler or C toolchain can change this digest. Do not accept the older November 18 binary based on its path or timestamp.
+Use the existing cluster `golang:1.26-bookworm` image and shared Go caches in a disposable container. Rebuild the final reviewed source and record its commit and digest. The digest above matches the independent round-6 RE2 build. A different compiler or C toolchain can change this digest. Do not accept the older November 18 binary based on its path or timestamp.
 
 ## Run the production import
 
 Only proceed after the sample gates and an independent review pass. Verify production redaction sources, the released deriver and reader versions, and `non_replicated_deduplication_window=1000` on requests, usage, and body_blobs. Confirm at least 8 GiB unreserved ClickHouse space plus the measured final-size and merge budget. Keep request and blob merge sizes bounded to approximately 2 GiB through a separately reviewed production setting. Do not change a stack as part of running this command.
 
-Build the reviewed commit on Linux ARM64 and compare its sha256 with the round-4 evidence. Install its binary at `/home/ubuntu/cpa-upgrade/cpa-archive-clickhouse-import`. Prepare `/root/cpa-clickhouse-writer.password` with mode 0600 through the existing secret mechanism. Never put the password in a command argument. On the cluster, run the following transient service after the preconditions pass. It survives SSH disconnection and appends its log.
+Build the reviewed commit on Linux ARM64 and compare its sha256 with the verified artifact above. Install its binary at `/home/ubuntu/cpa-upgrade/cpa-archive-clickhouse-import`. Prepare `/root/cpa-clickhouse-writer.password` with mode 0600 through the existing secret mechanism. Never put the password in a command argument. On the cluster, run the following transient service after the preconditions pass. It survives SSH disconnection and appends its log.
 
 ```sh
 sudo -n systemd-run --unit=cpa-archive-clickhouse-import --collect \
