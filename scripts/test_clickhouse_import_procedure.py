@@ -55,6 +55,7 @@ class ImportProcedure(unittest.TestCase):
                         if attempt == 59:
                             raise
                         time.sleep(1)
+                self.assertEqual(query("SELECT has(currentProfiles(), 'writer')", "cliproxy"), "1")
                 self.assertEqual(query("CHECK GRANT INSERT ON cliproxy.request_facts", "cliproxy"), "1")
                 self.assertEqual(query("SELECT value FROM system.settings WHERE name='max_memory_usage'", "cliproxy"), "1073741824")
                 query("CREATE DATABASE cliproxy")
