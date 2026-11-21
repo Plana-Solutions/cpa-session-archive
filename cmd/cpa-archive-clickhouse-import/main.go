@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"cpa-session-archive/internal/chimport"
+	"github.com/zricethezav/gitleaks/v8/regexp"
 )
 
 func main() {
@@ -31,6 +32,10 @@ func main() {
 	flag.BoolVar(&o.RetryQuarantined, "retry-quarantined", false, "retry only quarantined IDs using the same checkpoint")
 	verify := flag.Bool("verify-sample", false, "read-only byte-exact and live-extractor gate on bounded throwaway sample")
 	flag.Parse()
+	if regexp.Version == "stdlib" {
+		fmt.Fprintln(os.Stderr, "rebuild importer with -tags gore2regex for bounded redaction scanning")
+		os.Exit(1)
+	}
 	o.URL = os.Getenv("CLICKHOUSE_URL")
 	o.User = os.Getenv("CLICKHOUSE_USER")
 	o.Log = os.Stderr

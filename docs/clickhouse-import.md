@@ -1,12 +1,12 @@
 # Import a settled SQLite archive into ClickHouse
 
-Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and deriver, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
+Build with `-tags gore2regex` (required by the CLI) to use gitleaks’ linear-time RE2 engine with the same rules. Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and deriver, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
 
 The importer opens SQLite with `mode=ro`, `query_only`, and a one-second busy timeout. It closes each ID cursor before loading payloads. For the full import, retire the collector and read its static file directly, or use a settled `sqlite3 .backup` copy on a mounted volume. Keep that file and its path unchanged across resumes. Only one importer may use a checkpoint or target at a time.
 
 ## Complete the preconditions in order
 
-1. Confirm the production ClickHouse memory change has completed a 24-hour soak with zero kernel OOM kills and zero code 241 errors. The 2026-11-19 change set the memory ratio to `0.75` and the mark cache to `67108864`. A restart with recovered writes alone does not pass this gate.
+1. Use the dedicated 8 GiB host, not the former 1.5 GiB container. Re-measure memory there before any full load. The review observed an approximately 1.1 GiB untracked floor plus 300 MiB merges; start with a container cap of at least 4 GiB and a server limit around 3 GiB, then verify margin under load. Confirm the production ClickHouse memory change has completed a 24-hour soak with zero kernel OOM kills and zero code 241 errors. The 2026-11-19 change set the memory ratio to `0.75` and the mark cache to `67108864`. A restart with recovered writes alone does not pass this gate.
 2. Deploy sink `plana.9` with `body-dedup: true` and PR #4's compatible bodystore readers. The importer writes request skeletons and shared `body_blobs` directly. Require deriver lag near zero, the reviewed approximately 2 GiB merge cap, `merge_max_block_size=256`, and the disk and active-parts budget.
 3. Keep body deduplication enabled for the whole import and afterward. Do not run `restore-bodies` after import because it expands imported skeletons into large inline bodies.
 4. Provision `external_messages` and the grants below through the normal operator procedure. The importer does not create or alter tables. Its startup probes refuse missing request dedup columns, `body_blobs`, or `external_messages` before any insert.
@@ -24,13 +24,26 @@ Use an operator account for this step. The import account needs `SELECT` and `IN
 Users are defined in read-only XML on the production server, so SQL `GRANT` statements are not a valid provisioning method. Add these query grants to the operator-managed `users.d` XML for the import user, then reload ClickHouse through the normal deployment control.
 
 ```xml
-<query>GRANT SELECT, INSERT ON cliproxy.requests TO cliproxy</query>
-<query>GRANT SELECT, INSERT ON cliproxy.usage TO cliproxy</query>
-<query>GRANT SELECT, INSERT ON cliproxy.body_blobs TO cliproxy</query>
-<query>GRANT SELECT, INSERT ON cliproxy.external_messages TO cliproxy</query>
-<query>GRANT SELECT(unreserved_space) ON system.disks TO cliproxy</query>
-<query>GRANT SELECT(database,table,partition,active,bytes_on_disk) ON system.parts TO cliproxy</query>
+<clickhouse>
+ <users>
+  <cliproxy>
+   <password>REPLACE_VIA_EXISTING_SECRET_MECHANISM</password>
+   <networks><ip>::/0</ip></networks>
+   <profile>default</profile><quota>default</quota>
+   <grants>
+    <query>GRANT SELECT, INSERT ON cliproxy.requests</query>
+    <query>GRANT SELECT, INSERT ON cliproxy.usage</query>
+    <query>GRANT SELECT, INSERT ON cliproxy.body_blobs</query>
+    <query>GRANT SELECT, INSERT ON cliproxy.external_messages</query>
+    <query>GRANT SELECT(unreserved_space) ON system.disks</query>
+    <query>GRANT SELECT(database,table,partition,active,bytes_on_disk) ON system.parts</query>
+   </grants>
+  </cliproxy>
+ </users>
+</clickhouse>
 ```
+
+Merge this block into the existing user definition and preserve its password and network restrictions. Do not combine grants with access_management or named_collection_control. Config-file grants must omit TO. For a bind-mounted users.d file, write in place on the same inode (for example, `sudo tee existing-file.xml < prepared-file.xml`), never rename a replacement over it. Validate the complete XML on an isolated 25.8.33.6 container first.
 
 The disk and parts probes print the exact required grant on refusal, with the HTTP status and ClickHouse exception code. Server response bodies remain suppressed. Schema probes use `SELECT ... LIMIT 0`, so the import user does not need a `system.columns` grant. An operator must provision this native table if absent.
 
@@ -91,7 +104,7 @@ Require `ok` from `quick_check`. Record the digest and highest record ID with th
 
 ## Pass the sample gates
 
-Use a throwaway ClickHouse 25.8 server with hostname `cpa-archive-import-sample`, an isolated Docker network, and a loopback HTTP endpoint. Set the container cap to 1.5 GiB, the server memory ratio to `0.75`, the mark cache to 64 MiB, and `merge_max_block_size=256`. Never run either verification command against production. Both reject other hostnames and non-loopback URLs. Keep body deduplication enabled for the disposable database. This does not confirm the production rollout.
+Use a throwaway ClickHouse 25.8 server with hostname `cpa-archive-import-sample`, an isolated Docker network, and a loopback HTTP endpoint. For correctness-only rehearsals, set the container cap to at least 3 GiB, the server memory ratio to `0.75`, the mark cache to 64 MiB, and `merge_max_block_size=256`. Never run either verification command against production. Both reject other hostnames and non-loopback URLs. Keep body deduplication enabled for the disposable database. This does not confirm the production rollout.
 
 1. Import `--newest 2000 --external-sessions 50` with a dedicated checkpoint. Rehearse the released deriver in loop mode alongside the importer for at least 30 minutes. Pause only that deriver for ten minutes, resume it, and observe its backlog drain. Retain the peak query memory, container memory, lag samples, exceptions, and process exit codes.
 2. Run the same importer with `--verify-sample`, the same `--sqlite` and `--state`, and the existing redaction sources. Redirect stdout to a private `expected.jsonl`. This reads and redacts each archived request again, reconstructs its stored body with `bodystore.Reader`, checks byte equality and every digest, and emits only IDs, digests, and expected identities from the released extractor.
@@ -109,7 +122,7 @@ The round-4 Linux ARM64 binary sha256 is `abe2a3370002f8e9dc88aec40f67c0e83fc88f
 Build the final reviewed source with Go `1.26.11`, CGO enabled, and these reproducible flags.
 
 ```sh
-CGO_ENABLED=1 GOMAXPROCS=1 go build -trimpath -buildvcs=false \
+CGO_ENABLED=1 GOMAXPROCS=1 go build -tags gore2regex -trimpath -buildvcs=false \
   -o cpa-archive-clickhouse-import ./cmd/cpa-archive-clickhouse-import
 sha256sum cpa-archive-clickhouse-import
 ```
@@ -155,11 +168,11 @@ sudo -n tail -n 30 /root/cpa-archive-clickhouse-import.log
 
 `Restart=no` prevents unattended retries. After the service exits, the collected unit can be recreated with the same command. If a failed unit remains, inspect its result before `systemctl reset-failed`. Delete `/root/cpa-clickhouse-writer.password` after the run and its verification are complete.
 
-Watch CPA latency, sink retry and drop logs, live `max(ingested_at)`, and deriver lag throughout the run. Abort on any quarantine, unreserved space below 8 GiB, more than 300 active parts in any partition, ClickHouse exceptions 241 or 252, container memory above approximately 1.3 GB, lag above 300 or rising for three checks, stalled live capture, or CPA degradation. The importer enforces disk and parts limits at startup and every 20 completed batches. The remaining signals require operator monitoring. The intentional rehearsal pause is exempt from the lag abort threshold only in the throwaway server.
+Watch CPA latency, sink retry and drop logs, live `max(ingested_at)`, and deriver lag throughout the run. Abort on any quarantine, unreserved space below 8 GiB, more than 300 active parts in any partition, ClickHouse exceptions 241 or 252, cgroup `memory.stat` anon above the newly measured watchdog threshold, lag above 300 or rising for three checks, stalled live capture, or CPA degradation. The importer enforces disk and parts limits at startup and every 20 completed batches. The remaining signals require operator monitoring. The intentional rehearsal pause is exempt from the lag abort threshold only in the throwaway server.
 
 ## Monitor and abort
 
-On the AWS ClickHouse host, run these commands while the import runs on the cluster. Abort the import on any new OOM kill, code 241 or 252, or container memory above approximately 1.3 GB. Use the actual stack container name returned by `docker ps`.
+On the AWS ClickHouse host, run these commands while the import runs on the cluster. Abort the import on any new OOM kill, code 241 or 252, or cgroup `memory.stat` anon above the newly measured watchdog threshold. Use the actual stack container name returned by `docker ps`.
 
 ```sh
 sudo -n docker ps --format '{{.Names}} {{.Image}}'
@@ -194,9 +207,9 @@ SQLite BUSY and LOCKED, ClickHouse transport errors, HTTP 5xx, and ClickHouse ex
 
 After a verified repair, repeat the original command with `--retry-quarantined`. It selects only the quarantined record IDs, preserves native positions, and clears each ID only after successful writes. Do not edit the checkpoint to hide failures. A transport failure during retry keeps the quarantine entry. Use fresh round-4 state files for a new import. Resume a round-4 state only for the same unfinished run.
 
-The default batch is 16 records and 16 MiB of encoded rows plus item bytes. One larger record runs alone. JSON usage and native rows use an encoder without HTML escaping and stream into gzip without a second plain batch buffer. Requests and blobs use binary-safe RowBinary, including raw hashes. A blob's declared `raw_size` is checked before reading its data. Gzip checksums and lengths must validate. Requests and responses are capped at 64 MiB, with a cumulative expansion budget for referenced blobs. `--rate-limit` counts inserted proxy records, including usage repairs, and excludes skips. Native events are uncapped. Progress separates inserted rows, existing skips, model-less skips, no-original-ref source rows, and quarantine. The startup line records `source_no_original_ref` for the selected ID range even when the archived row falls back to retained inline SQLite payload columns.
+The default batch is 16 records and 16 MiB of encoded rows plus item bytes. One larger record runs alone. A prepared row that does not fit is retained for the next batch, including its redaction result; it is not redacted twice. Each record emits prepare/prepared lines plus a heartbeat every 30 seconds while loading, expanding and redacting. Payloads remain capped at 64 MiB; RE2 scanning bounds image work without masking or excluding image bytes from secret detection. JSON usage and native rows use an encoder without HTML escaping and stream into gzip without a second plain batch buffer. Requests and blobs use binary-safe RowBinary, including raw hashes. A blob's declared `raw_size` is checked before reading its data. Gzip checksums and lengths must validate. Requests and responses are capped at 64 MiB, with a cumulative expansion budget for referenced blobs. `--rate-limit` counts inserted proxy records, including usage repairs, and excludes skips. Native events are uncapped. Progress separates inserted rows, existing skips, model-less skips, no-original-ref source rows, and quarantine. The startup line records `source_no_original_ref` for the selected ID range even when the archived row falls back to retained inline SQLite payload columns.
 
-The importer skips model-less rows only when the retained request path identifies an auxiliary `count_tokens`, models, embeddings, or embed-content call. A model-less chat or messages/responses call remains eligible and is imported so the archive keeps the request and its body. Classify a source slice by `source_format`, retained request path, outcome, and status code before accepting a skip count; do not treat every empty model field as junk.
+The importer also skips empty model-less rows with no retained path, request payload or response payload, matching the sink’s completion drop while retaining the round-8 real-chat exception. Counts are reported separately as source_empty and source_no_model (auxiliary). The importer skips other model-less rows only when the retained request path identifies an auxiliary `count_tokens`, models, embeddings, or embed-content call. A model-less chat or messages/responses call remains eligible and is imported so the archive keeps the request and its body. Classify a source slice by `source_format`, retained request path, outcome, and status code before accepting a skip count; do not treat every empty model field as junk.
 
 ## Retained data and limits
 
@@ -218,6 +231,9 @@ ENGINE=MergeTree ORDER BY request_id AS
 SELECT DISTINCT request_id FROM cliproxy.requests
 WHERE request_headers['x-plana-import']='archive-v1';
 
+DELETE FROM cliproxy.turn_search
+WHERE request_id IN (SELECT request_id FROM cliproxy.archive_v1_rollback_ids)
+SETTINGS lightweight_deletes_sync=2;
 DELETE FROM cliproxy.request_facts
 WHERE request_id IN (SELECT request_id FROM cliproxy.archive_v1_rollback_ids)
 SETTINGS lightweight_deletes_sync=2;
@@ -232,4 +248,12 @@ WHERE import_marker='archive-v1'
 SETTINGS lightweight_deletes_sync=2;
 ```
 
-Verify that marker rows and their facts are absent, then restart the normal deriver loop. To re-import after rollback, use a new state-file path. Do not resume the rolled-back checkpoint, whose cursor already records completion. The new run ID bypasses retained ClickHouse insert tokens. Keep the old state and rollback ID table as evidence. Never use `deriver --rebuild`, truncate a shared table, or drop a monthly partition. Retain the rollback ID table until verification is complete. After interruption, resume the deletes using that frozen table. Never regenerate its IDs from partially deleted tables. Blob keys can be shared with live requests. Leave blobs in place during rollback. Remove only confirmed unreferenced blobs later under the sink's retention rules. Lightweight deletes reclaim storage on later merges and need temporary disk headroom.
+Verify that marker rows, their facts, and their turn_search candidates are absent (join each table against the frozen IDs); require zero rows in all three before restarting. After re-import require count()=uniqExact(request_id) in requests, usage, request_facts and turn_search, and count()=uniqExact((lineage,hash)) in body_blobs. Verify that marker rows and their facts are absent, then restart the normal deriver loop. To re-import after rollback, use a new state-file path. Do not resume the rolled-back checkpoint, whose cursor already records completion. The new run ID bypasses retained ClickHouse insert tokens. Keep the old state and rollback ID table as evidence. Never use `deriver --rebuild`, truncate a shared table, or drop a monthly partition. Retain the rollback ID table until verification is complete. After interruption, resume the deletes using that frozen table. Never regenerate its IDs from partially deleted tables. Blob keys can be shared with live requests. Leave blobs in place during rollback. Remove only confirmed unreferenced blobs later under the sink's retention rules. Lightweight deletes reclaim storage on later merges and need temporary disk headroom.
+
+## Overlap and boundary conversations
+
+Existence checks match request_id within the collector batch timestamp range widened by one day on each side. Before production, perform a read-only comparison of overlapping collector/live request IDs and their started_at timestamps using the restricted reader. Require zero IDs with timestamp drift beyond one day; investigate rather than importing those IDs blindly.
+
+Live facts derived before history arrives can retain stale deltas for conversations spanning the boundary (the review measured 8 instead of 9 turns). After import, stop the deriver and wait for its active pass, freeze all request IDs for each affected complete conversation from request_facts (both imported and live), and delete their turn_search candidates before deleting their request_facts, using the same frozen-ID lightweight-delete procedure above. Reset only its acknowledged backlog cursor with `DELETE FROM cliproxy.deriver_progress WHERE 1 SETTINGS lightweight_deletes_sync=2` while it is stopped, leaving all unrelated facts intact. Restart the normal deriver (no --rebuild), so the anti-join reprocesses the complete conversations in chronological order. Verify the boundary conversation against a native derivation, including turn counts, before accepting the import. Keep the frozen IDs until this verification passes. This is an operator step, not performed automatically by the importer.
+
+With background_pool_size=4, configure number_of_free_entries_in_pool_to_execute_optimize_entire_partition at most 8 (alongside the mutation and merge free-entry settings). Validate the complete server configuration on 25.8.33.6 before deployment.

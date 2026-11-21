@@ -153,6 +153,7 @@ func runFixture(t *testing.T, pace bool) {
 	s.DB.Close()
 	cfg := filepath.Join(dir, "config.yaml")
 	os.WriteFile(cfg, []byte("api-keys: []"), 0600)
+	var progressLog bytes.Buffer
 	requests := map[string]bool{}
 	usage := map[string]bool{}
 	positions := map[uint32]int{}
@@ -211,7 +212,7 @@ func runFixture(t *testing.T, pace bool) {
 		}
 	}))
 	defer server.Close()
-	o := Options{SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1}
+	o := Options{SQLite: path, State: filepath.Join(dir, "state"), Config: cfg, AuthDir: dir, URL: server.URL, Batch: 16, BatchBytes: 3000, ExternalSessions: 1, Log: &progressLog}
 	if pace {
 		o.Rate = 20
 		o.ExternalSessions = -1
@@ -252,6 +253,9 @@ func runFixture(t *testing.T, pace bool) {
 		if positions[0] != 1 || positions[1] != 1 {
 			t.Fatal("native resume duplicated positions", positions)
 		}
+	}
+	if pace && strings.Count(progressLog.String(), "phase=prepared ") != 3 {
+		t.Fatal("rows redacted more than once", progressLog.String())
 	}
 	ro, _ := openReadOnly(path)
 	defer ro.DB.Close()
@@ -392,11 +396,11 @@ func TestModelLessClassification(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE records(request_id TEXT,source_format TEXT,model TEXT,requested_model TEXT,metadata_json TEXT); CREATE TABLE record_facets(request_id TEXT,name TEXT,value TEXT)`)
+	_, err = db.Exec(`CREATE TABLE records(request_id TEXT,source_format TEXT,model TEXT,requested_model TEXT,metadata_json TEXT,original_ref TEXT,response_ref TEXT,original_request_gz BLOB,response_gz BLOB); CREATE TABLE record_facets(request_id TEXT,name TEXT,value TEXT)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO records VALUES
+	_, err = db.Exec(`INSERT INTO records(request_id,source_format,model,requested_model,metadata_json) VALUES
 		('chat','claude','','','{"request_path":"/v1/messages"}'),
 		('tokens','claude','','','{"request_path":"/v1/messages/count_tokens"}'),
 		('model-list','models','','','{}')`)

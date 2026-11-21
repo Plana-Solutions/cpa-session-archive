@@ -43,6 +43,7 @@ type checkpoint struct {
 	ExternalDone    bool
 	NativeLastID    int64
 	NativePosition  uint32
+	EmptySkipped    int64 `json:"empty_skipped"`
 	NoModelSkipped  int64 `json:"no_model_skipped"`
 	NoOriginalRef   int64 `json:"no_original_ref"`
 	Quarantine      map[int64]string
@@ -53,12 +54,14 @@ type item struct {
 	StartedAt string
 }
 
-const requestPath = `lower(COALESCE(json_extract(metadata_json,'$.request_path'),(SELECT value FROM record_facets WHERE record_facets.request_id=records.request_id AND record_facets.name='request.path' LIMIT 1),''))`
+const requestPath = `lower(COALESCE(nullif(json_extract(metadata_json,'$.request_path'),''),(SELECT value FROM record_facets WHERE record_facets.request_id=records.request_id AND record_facets.name='request.path' LIMIT 1),''))`
 
 // Auxiliary endpoints do not represent model conversations. Other model-less
 // rows remain importable so the archive preserves real chat calls.
 const modelLessAuxiliary = `(source_format IN ('models','embeddings') OR ` + requestPath + ` LIKE '%count_tokens%' OR ` + requestPath + ` LIKE '%counttokens%' OR ` + requestPath + ` LIKE '%/models%' OR ` + requestPath + ` LIKE '%/embeddings%' OR ` + requestPath + ` LIKE '%embedcontent%')`
-const importableProxyRows = `source_format!='external-native-event' AND ((COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'') OR NOT ` + modelLessAuxiliary + `)`
+const emptyModelLess = `(COALESCE(model,'')='' AND COALESCE(requested_model,'')='' AND ` + requestPath + `='' AND COALESCE(original_ref,'')='' AND COALESCE(length(original_request_gz),0)=0 AND COALESCE(response_ref,'')='' AND COALESCE(length(response_gz),0)=0)`
+const skippedEmptyRows = `source_format!='external-native-event' AND ` + emptyModelLess
+const importableProxyRows = `source_format!='external-native-event' AND ((COALESCE(model,'')<>'' OR COALESCE(requested_model,'')<>'') OR NOT ` + modelLessAuxiliary + `) AND NOT ` + emptyModelLess
 const skippedModelLessRows = `source_format!='external-native-event' AND COALESCE(model,'')='' AND COALESCE(requested_model,'')='' AND ` + modelLessAuxiliary
 
 func openReadOnly(path string) (*archive.Store, error) {
@@ -309,6 +312,11 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	s.NoModelSkipped = noModel
+	if err = retry(ctx, func() error {
+		return store.DB.QueryRowContext(ctx, "SELECT count(*) FROM records WHERE id>? AND id<=? AND "+skippedEmptyRows, s.FirstID, s.UpperID).Scan(&s.EmptySkipped)
+	}); err != nil {
+		return err
+	}
 	var noOriginalRef int64
 	err = retry(ctx, func() error {
 		var e error
@@ -320,7 +328,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	s.NoOriginalRef = noOriginalRef
 	if o.Log != nil {
-		fmt.Fprintf(o.Log, "source_no_original_ref=%d source_no_model=%d\n", s.NoOriginalRef, s.NoModelSkipped)
+		fmt.Fprintf(o.Log, "source_no_original_ref=%d source_no_model=%d source_empty=%d\n", s.NoOriginalRef, s.NoModelSkipped, s.EmptySkipped)
 	}
 	stopCtx := ctx
 	ctx = context.WithoutCancel(ctx) // Finish and checkpoint the current batch before honoring a stop signal.
@@ -364,6 +372,13 @@ func Run(ctx context.Context, o Options) error {
 		err = retry(ctx, func() error { var e error; a, e = readArchive(ctx, store.DB, x.RequestID); return e })
 		return
 	}
+	type prepared struct {
+		id     int64
+		rb, ub []byte
+		body   bodyItems
+		size   int
+	}
+	var pending *prepared
 	for {
 		if err = guard(); err != nil {
 			return err
@@ -433,42 +448,62 @@ func Run(ctx context.Context, o Options) error {
 				last = x.ID
 				continue
 			}
-			a, err := readRecord(x)
-			if err != nil {
-				if !quarantinable(err) || ctx.Err() != nil {
-					return err
-				}
-				if err = quarantine(x.ID, "invalid or missing payload"); err != nil {
-					return err
-				}
-				last = x.ID
-				continue
-			}
-			row, u, err := mapRecord(a, r)
-			if err != nil {
-				if err = quarantine(x.ID, "invalid archive timestamp"); err != nil {
-					return err
-				}
-				last = x.ID
-				continue
-			}
 			var rb, ub []byte
 			var body bodyItems
-			if !exists {
-				body = splitBody(&row, a.SessionID)
-				rb = encodeBodyRequest(row, body.lineage, body.sk)
-			}
-			if !hasUsage {
-				ub, err = encodeJSON(u)
-				if err != nil {
-					return err
+			size := 0
+			if pending != nil && pending.id == x.ID {
+				rb, ub, body, size = pending.rb, pending.ub, pending.body, pending.size
+				pending = nil
+				if exists {
+					rb = nil
+					body = bodyItems{}
 				}
-			}
-			size := len(rb) + len(ub) + 2
-			for _, b := range body.blobs {
-				size += len(b)
+				if hasUsage {
+					ub = nil
+				}
+			} else {
+				stopProgress := recordProgress(o.Log, x.ID, 30*time.Second)
+				a, err := readRecord(x)
+				if err != nil {
+					stopProgress()
+				}
+				if err != nil {
+					if !quarantinable(err) || ctx.Err() != nil {
+						return err
+					}
+					if err = quarantine(x.ID, "invalid or missing payload"); err != nil {
+						return err
+					}
+					last = x.ID
+					continue
+				}
+				row, u, err := mapRecord(a, r)
+				stopProgress()
+				if err != nil {
+					if err = quarantine(x.ID, "invalid archive timestamp"); err != nil {
+						return err
+					}
+					last = x.ID
+					continue
+				}
+				if !exists {
+					body = splitBody(&row, a.SessionID)
+					rb = encodeBodyRequest(row, body.lineage, body.sk)
+				}
+				if !hasUsage {
+					ub, err = encodeJSON(u)
+					if err != nil {
+						return err
+					}
+				}
+				size = len(rb) + len(ub) + 2
+				for _, b := range body.blobs {
+					size += len(b)
+				}
+
 			}
 			if batchFull(batchBytes, size, o.BatchBytes) {
+				pending = &prepared{x.ID, rb, ub, body, size}
 				break
 			}
 			if rb != nil {

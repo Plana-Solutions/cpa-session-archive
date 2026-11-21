@@ -224,7 +224,7 @@ func (c *client) existing(ctx context.Context, table string, ids []string, lo, h
 	if table == "requests" {
 		field = "started_at"
 	}
-	q = strings.Replace(q, " WHERE ", " WHERE "+field+">={lo:DateTime64(9,'UTC')} AND "+field+"<={hi:DateTime64(9,'UTC')} AND ", 1)
+	q = strings.Replace(q, " WHERE ", " WHERE "+field+">=subtractDays({lo:DateTime64(9,'UTC')},1) AND "+field+"<=addDays({hi:DateTime64(9,'UTC')},1) AND ", 1)
 	b, err := c.call(ctx, q, params, nil, false)
 	if err != nil {
 		return nil, err
