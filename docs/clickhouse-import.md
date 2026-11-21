@@ -1,17 +1,19 @@
 # Import a settled SQLite archive into ClickHouse
 
-Build with `-tags gore2regex` (required by the CLI) to use gitleaks’ linear-time RE2 engine with the same rules. Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and deriver, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
+Build with `-tags gore2regex` (required by the CLI) to use gitleaks’ linear-time RE2 engine with the same rules. Build `cmd/cpa-archive-clickhouse-import` with Go 1.26 and CGO. The importer pins the sink and its extract module to `v0.1.0-plana.9`. Deploy that release's raw schema and deriver `v0.1.0-plana.12`, and PR #4's compatible dedup readers before importing. This guide does not authorize deployment or a production import.
 
 The importer opens SQLite with `mode=ro`, `query_only`, and a one-second busy timeout. It closes each ID cursor before loading payloads. For the full import, retire the collector and read its static file directly, or use a settled `sqlite3 .backup` copy on a mounted volume. Keep that file and its path unchanged across resumes. Only one importer may use a checkpoint or target at a time.
 
 ## Complete the preconditions in order
 
 1. Use the dedicated 8 GiB host, not the former 1.5 GiB container. Re-measure memory there before any full load. The review observed an approximately 1.1 GiB untracked floor plus 300 MiB merges; start with a container cap of at least 4 GiB and a server limit around 3 GiB, then verify margin under load. Confirm the production ClickHouse memory change has completed a 24-hour soak with zero kernel OOM kills and zero code 241 errors. The 2026-11-19 change set the memory ratio to `0.75` and the mark cache to `67108864`. A restart with recovered writes alone does not pass this gate.
-2. Deploy sink `plana.9` with `body-dedup: true` and PR #4's compatible bodystore readers. The importer writes request skeletons and shared `body_blobs` directly. Require deriver lag near zero, the reviewed approximately 2 GiB merge cap, `merge_max_block_size=256`, and the disk and active-parts budget.
+2. Deploy sink `plana.9` with deriver `v0.1.0-plana.12` with `body-dedup: true` and PR #4's compatible bodystore readers. The importer writes request skeletons and shared `body_blobs` directly. Require deriver lag near zero, the reviewed approximately 2 GiB merge cap, `merge_max_block_size=256`, and the disk and active-parts budget.
 3. Keep body deduplication enabled for the whole import and afterward. Do not run `restore-bodies` after import because it expands imported skeletons into large inline bodies.
 4. Provision `external_messages` and the grants below through the normal operator procedure. The importer does not create or alter tables. Its startup probes refuse missing request dedup columns, `body_blobs`, or `external_messages` before any insert.
 5. Pass both isolated sample gates, review the final commit, and verify the ARM64 binary digest recorded in the round-4 evidence.
 6. Retire the collector and verify the static source as below, or prepare the backup volume. Keep the source path and file unchanged across resumes.
+
+Production now uses ClickHouse 25.8.33.6 with a 2 GiB container, memory ratio `0.75`, and a 64 MiB mark cache. Its small-host server profile sets `background_schedule_pool_size=16`, `background_buffer_flush_schedule_pool_size=2`, `background_message_broker_schedule_pool_size=1`, `background_distributed_schedule_pool_size=1`, `background_move_pool_size=1`, `background_fetches_pool_size=1`, `background_common_pool_size=2`, `max_thread_pool_free_size=16`, `async_insert_threads=2`, and `memory_worker_purge_dirty_pages_threshold_ratio=0.05`. The reported thread count fell from about 650 to 80. These settings and deriver `v0.1.0-plana.12`, which fixes a stalled backlog checkpoint, supersede the round-6 runtime configuration. Rehearse both together before revising the memory gate above. The 1.2 GiB watchdog measures cgroup anon bytes, not `docker stats`.
 
 Proposed follow-up in the sink repository, outside this PR's scope. Change `restore-bodies` to exclude rows where `request_headers['x-plana-import']='archive-v1'`. Its selection and any cursor or completion checks must use the same exclusion. Until that change is released and verified, keep dedup enabled permanently after import. Rolling back this import does not require restoring request bodies inline.
 
@@ -19,31 +21,19 @@ The accepted historical limits are 20 of 1,698 Claude identities merging into th
 
 ## Provision the schema and minimum grants
 
-Use an operator account for this step. The import account needs `SELECT` and `INSERT` on these four tables. No DDL, mutation, or credential-management grants are needed by the importer.
-
-Users are defined in read-only XML on the production server, so SQL `GRANT` statements are not a valid provisioning method. Add these query grants to the operator-managed `users.d` XML for the import user, then reload ClickHouse through the normal deployment control.
+Use an operator account for this step. Production `cliproxy` already has `GRANT ALL ON cliproxy.*`, which covers the importer's table reads and inserts. Add only the two `system.*` queries below inside its existing `<cliproxy><grants>` element in the production users file. The resulting element is exactly:
 
 ```xml
-<clickhouse>
- <users>
-  <cliproxy>
-   <password>REPLACE_VIA_EXISTING_SECRET_MECHANISM</password>
-   <networks><ip>::/0</ip></networks>
-   <profile>default</profile><quota>default</quota>
-   <grants>
-    <query>GRANT SELECT, INSERT ON cliproxy.requests</query>
-    <query>GRANT SELECT, INSERT ON cliproxy.usage</query>
-    <query>GRANT SELECT, INSERT ON cliproxy.body_blobs</query>
-    <query>GRANT SELECT, INSERT ON cliproxy.external_messages</query>
-    <query>GRANT SELECT(unreserved_space) ON system.disks</query>
-    <query>GRANT SELECT(database,table,partition,active,bytes_on_disk) ON system.parts</query>
-   </grants>
-  </cliproxy>
- </users>
-</clickhouse>
+<grants>
+ <query>GRANT ALL ON cliproxy.*</query>
+ <query>GRANT SELECT(unreserved_space) ON system.disks</query>
+ <query>GRANT SELECT(database,table,partition,active,bytes_on_disk) ON system.parts</query>
+</grants>
 ```
 
-Merge this block into the existing user definition and preserve its password and network restrictions. Do not combine grants with access_management or named_collection_control. Config-file grants must omit TO. For a bind-mounted users.d file, write in place on the same inode (for example, `sudo tee existing-file.xml < prepared-file.xml`), never rename a replacement over it. Validate the complete XML on an isolated 25.8.33.6 container first.
+Keep the existing user, password, networks, quota, and `<profile>writer</profile>` unchanged. Do not add a separate users.d file or another user definition. A separate block can replace existing grants or the profile, and a second password field prevents startup on 25.8.33.6. Users are defined in read-only XML, so SQL `GRANT` is not a provisioning method.
+
+Prepare and validate the complete production XML with disposable passwords on an isolated 25.8.33.6 container first. Confirm startup, `SHOW GRANTS FOR cliproxy`, INSERT on `cliproxy.*`, the writer profile's 1 GiB `max_memory_usage`, and the importer's schema, disk, and parts probes. Edit the existing host file in place on the same inode, for example `sudo tee existing-file.xml < prepared-file.xml`. The file is bind-mounted read-only into ClickHouse. Never rename a replacement over it. Reload through the normal deployment control. Do not combine grants with access_management or named_collection_control. Config-file grants omit TO.
 
 The disk and parts probes print the exact required grant on refusal, with the HTTP status and ClickHouse exception code. Server response bodies remain suppressed. Schema probes use `SELECT ... LIMIT 0`, so the import user does not need a `system.columns` grant. An operator must provision this native table if absent.
 
@@ -176,7 +166,7 @@ On the AWS ClickHouse host, run these commands while the import runs on the clus
 
 ```sh
 sudo -n docker ps --format '{{.Names}} {{.Image}}'
-sudo -n docker stats --no-stream <clickhouse-container>
+sudo -n docker exec <clickhouse-container> grep -E '^anon ' /sys/fs/cgroup/memory.stat
 sudo -n journalctl -k --since '10 minutes ago' | grep -i oom
 ```
 

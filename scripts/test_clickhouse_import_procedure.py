@@ -12,8 +12,8 @@ DOC = (Path(__file__).resolve().parents[1] / "docs/clickhouse-import.md").read_t
 class ImportProcedure(unittest.TestCase):
     def test_xml_grants_have_no_grantee(self):
         root = ET.fromstring(DOC.split("```xml\n")[1].split("\n```")[0])
-        grants = root.findall("./users/cliproxy/grants/query")
-        self.assertEqual(len(grants), 6)
+        grants = root.findall("./query")
+        self.assertEqual(len(grants), 3)
         self.assertTrue(all(" TO " not in g.text for g in grants))
 
     @unittest.skipUnless(os.getenv("IMPORT_PROCEDURE_DOCKER") == "1", "isolated Docker rehearsal")
@@ -31,9 +31,18 @@ class ImportProcedure(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="imp11-") as directory:
             xml = Path(directory) / "user.xml"
-            xml.write_text(DOC.split("```xml\n")[1].split("\n```")[0].replace(
-                "REPLACE_VIA_EXISTING_SECRET_MECHANISM", "imp11-test"))
+            root = ET.fromstring("""<clickhouse>
+              <profiles><writer><max_memory_usage>1073741824</max_memory_usage></writer></profiles>
+              <users><cliproxy><password>imp11-test</password>
+              <networks><ip>::/0</ip></networks><profile>writer</profile><quota>default</quota>
+              <grants><query>GRANT ALL ON cliproxy.*</query></grants></cliproxy></users>
+              </clickhouse>""")
+            user = root.find("./users/cliproxy")
+            user.remove(user.find("grants"))
+            user.append(ET.fromstring(DOC.split("```xml\n")[1].split("\n```")[0]))
+            xml.write_text(ET.tostring(root, encoding="unicode"))
             docker("run", "-d", "--name", name, "--network", "none",
+                   "--tmpfs", "/var/lib/clickhouse", "--tmpfs", "/var/log/clickhouse-server",
                    "-v", str(xml) + ":/etc/clickhouse-server/users.d/imp11.xml:ro",
                    "clickhouse/clickhouse-server:25.8.33.6")
             try:
@@ -46,6 +55,8 @@ class ImportProcedure(unittest.TestCase):
                         if attempt == 59:
                             raise
                         time.sleep(1)
+                self.assertEqual(query("CHECK GRANT INSERT ON cliproxy.request_facts", "cliproxy"), "1")
+                self.assertEqual(query("SELECT value FROM system.settings WHERE name='max_memory_usage'", "cliproxy"), "1073741824")
                 query("CREATE DATABASE cliproxy")
                 schemas = {
                     "requests": "request_id String,request_headers Map(String,String)",
@@ -66,7 +77,7 @@ class ImportProcedure(unittest.TestCase):
                     query("INSERT INTO cliproxy.usage VALUES ('archive-v1:r','archive-v1')", "cliproxy")
                     query("INSERT INTO cliproxy.external_messages VALUES ('r','archive-v1')", "cliproxy")
                     for table in ["request_facts", "turn_search"]:
-                        query(f"INSERT INTO cliproxy.{table} VALUES ('r')")
+                        query(f"INSERT INTO cliproxy.{table} VALUES ('r')", "cliproxy")
 
                 query("INSERT INTO cliproxy.body_blobs VALUES ('shared')", "cliproxy")
                 for table in ["requests", "usage", "body_blobs", "external_messages"]:
