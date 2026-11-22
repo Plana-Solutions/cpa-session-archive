@@ -36,6 +36,7 @@ func (c *client) call(ctx context.Context, q string, params url.Values, body io.
 	for k, vs := range params {
 		v[k] = vs
 	}
+	v.Set("use_query_condition_cache", "0")
 	u.RawQuery = v.Encode()
 	var result []byte
 	err = retry(ctx, func() error {
