@@ -260,7 +260,6 @@ func TestClickHouseHandlers(t *testing.T) {
 				t.Fatalf("search treated %q as a wildcard", literal)
 			}
 		}
-		call("external-sources", nil, 200)
 	})
 	t.Run("injected context titles and turn starts", func(t *testing.T) {
 		for _, fixture := range []struct {

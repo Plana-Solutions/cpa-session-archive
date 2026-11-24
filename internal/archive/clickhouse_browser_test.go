@@ -42,9 +42,6 @@ func TestClickHouseBrowserServer(t *testing.T) {
 		if path == "/" || path == "/archive" || path == "/management.html" {
 			path = "/v0/resource/plugins/" + pluginID + "/index.html"
 		}
-		if path == "/external.js" {
-			path = "/v0/resource/plugins/" + pluginID + "/external.js"
-		}
 		raw, _ := json.Marshal(managementRequest{Method: r.Method, Path: path, Headers: r.Header, Query: r.URL.Query()})
 		data, e := p.HandleContext(r.Context(), "management.handle", raw)
 		if e != nil {
