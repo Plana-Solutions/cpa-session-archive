@@ -275,8 +275,6 @@ func (c *clickhouseReader) readContext(parent context.Context, endpoint string, 
 		return c.turns(ctx, w, q, endpoint, limit, offset)
 	case "requests", "request-view", "request-context":
 		return c.request(ctx, w, q, endpoint, limit)
-	case "external-sources":
-		return []any{}, nil
 	case "export":
 		return c.export(ctx, w, q)
 	default:

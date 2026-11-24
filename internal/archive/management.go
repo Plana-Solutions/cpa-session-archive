@@ -15,9 +15,6 @@ const pluginID = "cpa-session-archive"
 //go:embed web/index.html
 var managementHTML []byte
 
-//go:embed web/external.js
-var managementExternalJS []byte
-
 type managementRequest struct {
 	Method  string
 	Path    string
@@ -33,7 +30,28 @@ type managementResponse struct {
 
 func (p *Plugin) managementRegistration() map[string]any {
 	base := "/plugins/" + pluginID
-	return map[string]any{"Routes": []map[string]string{{"Method": "GET", "Path": base + "/stats"}, {"Method": "GET", "Path": base + "/insights"}, {"Method": "GET", "Path": base + "/facets"}, {"Method": "GET", "Path": base + "/sessions"}, {"Method": "GET", "Path": base + "/cancel-search"}, {"Method": "GET", "Path": base + "/turns"}, {"Method": "GET", "Path": base + "/turn-text"}, {"Method": "GET", "Path": base + "/requests"}, {"Method": "GET", "Path": base + "/request-context"}, {"Method": "GET", "Path": base + "/request-view"}, {"Method": "GET", "Path": base + "/export"}, {"Method": "GET", "Path": base + "/external-sources"}, {"Method": "GET", "Path": base + "/external-source"}}, "Resources": []map[string]string{{"Path": "/index.html", "Menu": "会话归档", "Description": "Browse archived projects, sessions and training data."}, {"Path": "/external.js"}}}
+	return map[string]any{
+		"Routes": []map[string]string{
+			{"Method": "GET", "Path": base + "/stats"},
+			{"Method": "GET", "Path": base + "/insights"},
+			{"Method": "GET", "Path": base + "/facets"},
+			{"Method": "GET", "Path": base + "/sessions"},
+			{"Method": "GET", "Path": base + "/cancel-search"},
+			{"Method": "GET", "Path": base + "/turns"},
+			{"Method": "GET", "Path": base + "/turn-text"},
+			{"Method": "GET", "Path": base + "/requests"},
+			{"Method": "GET", "Path": base + "/request-context"},
+			{"Method": "GET", "Path": base + "/request-view"},
+			{"Method": "GET", "Path": base + "/export"},
+		},
+		"Resources": []map[string]string{
+			{
+				"Path":        "/index.html",
+				"Menu":        "Session Archive",
+				"Description": "Fleethouse insights, session browser, and conversation reader backed by ClickHouse.",
+			},
+		},
+	}
 }
 func (p *Plugin) handleManagement(raw []byte) ([]byte, error) {
 	return p.handleManagementContext(context.Background(), raw)
@@ -53,10 +71,6 @@ func (p *Plugin) handleManagementContext(ctx context.Context, raw []byte) ([]byt
 		case "/index.html":
 			status = http.StatusOK
 			body = managementHTML
-		case "/external.js":
-			status = http.StatusOK
-			body = managementExternalJS
-			contentType = "text/javascript; charset=utf-8"
 		}
 		return ok(managementResponse{
 			StatusCode: status,

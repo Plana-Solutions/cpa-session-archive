@@ -34,11 +34,13 @@ func TestClickHouseBrowserServer(t *testing.T) {
 			w.Write([]byte(`{"items":[{"apiKeyHash":"sha256:mock-key-hash","alias":"长文本测试 Key"}]}`))
 			return
 		}
-		if path == "/" || path == "/management.html" {
-			path = "/v0/resource/plugins/" + pluginID + "/index.html"
+		if path == "/v0/management/plugins/cpa-key-policy/identities" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"identities":[]}`))
+			return
 		}
-		if path == "/external.js" {
-			path = "/v0/resource/plugins/" + pluginID + "/external.js"
+		if path == "/" || path == "/archive" || path == "/management.html" {
+			path = "/v0/resource/plugins/" + pluginID + "/index.html"
 		}
 		raw, _ := json.Marshal(managementRequest{Method: r.Method, Path: path, Headers: r.Header, Query: r.URL.Query()})
 		data, e := p.HandleContext(r.Context(), "management.handle", raw)
