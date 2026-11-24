@@ -285,11 +285,12 @@ export function createArchiveClient(session: AuthSession) {
       return fetchJson<TurnsListResponse>(session, `${PLUGIN_BASE}/turns?${q.toString()}`, signal);
     },
 
-    getTurnDetail(sessionId: string, turnId: string, signal?: AbortSignal) {
+    getTurnDetail(sessionId: string, turnId: string, offset = 0, signal?: AbortSignal) {
       const q = new URLSearchParams({
         session_id: sessionId,
         turn_id: turnId,
         limit: '100',
+        offset: String(offset),
         days: '365',
       });
       return fetchJson<TurnDetailResponse>(session, `${PLUGIN_BASE}/turns?${q.toString()}`, signal);
@@ -376,6 +377,7 @@ export function createArchiveClient(session: AuthSession) {
       let byteOffset = 0;
       let totalBytes = 0;
       let chunks = 0;
+      let completed = false;
       let filename =
         opts.scope === 'all'
           ? `cpa-archive-${opts.format}.jsonl`
@@ -384,7 +386,7 @@ export function createArchiveClient(session: AuthSession) {
       let pinnedFrom = '';
       let pinnedTo = '';
 
-      while (chunks < 5000) {
+      while (true) {
         const q = new URLSearchParams({
           format: opts.format,
           offset: String(offset),
@@ -417,16 +419,23 @@ export function createArchiveClient(session: AuthSession) {
         chunks++;
         onProgress?.(chunks, totalBytes);
 
-        if (res.done) break;
+        if (res.done) {
+          completed = true;
+          break;
+        }
         const nextOff = res.next_offset ?? offset;
         const nextSess = res.next_session_offset ?? sessionOffset;
         const nextByte = res.next_byte_offset ?? 0;
         if (nextOff === offset && nextSess === sessionOffset && nextByte === byteOffset) {
-          break;
+          throw new Error('Export stopped making progress before completion');
         }
         offset = nextOff;
         sessionOffset = nextSess;
         byteOffset = nextByte;
+      }
+
+      if (!completed) {
+        throw new Error('Export did not finish cleanly');
       }
 
       const blob = new Blob(parts, { type: 'application/x-ndjson;charset=utf-8' });

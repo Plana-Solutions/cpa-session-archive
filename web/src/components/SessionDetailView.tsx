@@ -125,6 +125,8 @@ export function SessionDetailView({
   const [expandedTurn, setExpandedTurn] = useState<Record<string, boolean>>({});
   const [turnDetails, setTurnDetails] = useState<Record<string, TurnDetailResponse>>({});
   const [loadingDetail, setLoadingDetail] = useState<Record<string, boolean>>({});
+  const [loadingMoreSteps, setLoadingMoreSteps] = useState<Record<string, boolean>>({});
+  const [stepsExhausted, setStepsExhausted] = useState<Record<string, boolean>>({});
 
   // Expanded request-view messages cache by request_id
   const [requestViews, setRequestViews] = useState<Record<string, RequestTimelineView>>({});
@@ -151,6 +153,8 @@ export function SessionDetailView({
     setOffset(0);
     setExpandedTurn({});
     setFullPrompts({});
+    setTurnDetails({});
+    setStepsExhausted({});
   }, [sessionId]);
 
   useEffect(() => {
@@ -206,13 +210,43 @@ export function SessionDetailView({
     if (nextOpen && !turnDetails[turnId] && !loadingDetail[turnId]) {
       setLoadingDetail((p) => ({ ...p, [turnId]: true }));
       try {
-        const detail = await client.getTurnDetail(sessionId, turnId);
+        const detail = await client.getTurnDetail(sessionId, turnId, 0);
         setTurnDetails((p) => ({ ...p, [turnId]: detail }));
       } catch {
         // Ignore.
       } finally {
         setLoadingDetail((p) => ({ ...p, [turnId]: false }));
       }
+    }
+  };
+
+  const loadMoreSteps = async (turnId: string) => {
+    const current = turnDetails[turnId];
+    if (!current || loadingMoreSteps[turnId] || stepsExhausted[turnId]) return;
+    const nextOffset = current.records.length;
+    setLoadingMoreSteps((p) => ({ ...p, [turnId]: true }));
+    try {
+      const next = await client.getTurnDetail(sessionId, turnId, nextOffset);
+      const added = next.records ?? [];
+      if (added.length === 0) {
+        setStepsExhausted((p) => ({ ...p, [turnId]: true }));
+      } else {
+        setTurnDetails((p) => {
+          const prev = p[turnId];
+          if (!prev) return p;
+          return {
+            ...p,
+            [turnId]: {
+              ...next,
+              records: [...prev.records, ...added],
+            },
+          };
+        });
+      }
+    } catch {
+      // Ignore.
+    } finally {
+      setLoadingMoreSteps((p) => ({ ...p, [turnId]: false }));
     }
   };
 
@@ -442,7 +476,12 @@ export function SessionDetailView({
           {turns.map((turn, idx) => {
             const turnNum = order === 'asc' ? offset + idx + 1 : total - (offset + idx);
             const promptText = fullPrompts[turn.turn_id] ?? turn.user_text;
-            const looksTruncated = !fullPrompts[turn.turn_id] && (turn.user_text?.length ?? 0) >= 1590;
+            const promptBytes = turn.user_text
+              ? new TextEncoder().encode(turn.user_text).length
+              : 0;
+            const looksTruncated =
+              !fullPrompts[turn.turn_id] &&
+              ((turn.user_text?.length ?? 0) >= 1590 || promptBytes >= 1590);
             const isExpanded = Boolean(expandedTurn[turn.turn_id]);
             const detail = turnDetails[turn.turn_id];
             const outcomeBad = turn.outcome === 'failed' || turn.outcome === 'rejected';
@@ -706,6 +745,32 @@ export function SessionDetailView({
                         );
                       })
                     )}
+                    {detail &&
+                      detail.records.length > 0 &&
+                      detail.records.length < detail.total &&
+                      !stepsExhausted[turn.turn_id] && (
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[11px] text-zinc-500">
+                            Showing {formatNumber(detail.records.length)} of{' '}
+                            {formatNumber(detail.total)} steps
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => loadMoreSteps(turn.turn_id)}
+                            disabled={loadingMoreSteps[turn.turn_id]}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-700 hover:text-white disabled:opacity-50 cursor-pointer"
+                          >
+                            {loadingMoreSteps[turn.turn_id] && (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            )}
+                            <span>
+                              {loadingMoreSteps[turn.turn_id]
+                                ? 'Loading more steps…'
+                                : 'Load more steps'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                   </div>
                 )}
               </article>
