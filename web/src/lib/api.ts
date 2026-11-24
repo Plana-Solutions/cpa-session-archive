@@ -370,13 +370,14 @@ export function createArchiveClient(session: AuthSession) {
     async downloadExport(
       opts: { scope: 'session' | 'all'; sessionId?: string; format: 'archive' | 'sft'; days?: number },
       onProgress?: (chunks: number, bytes: number) => void
-    ): Promise<void> {
+    ): Promise<{ skippedIncomplete: number }> {
       const parts: string[] = [];
       let offset = 0;
       let sessionOffset = 0;
       let byteOffset = 0;
       let totalBytes = 0;
       let chunks = 0;
+      let skippedIncomplete = 0;
       let completed = false;
       let filename =
         opts.scope === 'all'
@@ -412,6 +413,9 @@ export function createArchiveClient(session: AuthSession) {
         if (res.filename) filename = res.filename;
         if (!pinnedFrom && res.from) pinnedFrom = res.from;
         if (!pinnedTo && res.to) pinnedTo = res.to;
+        if (res.skipped_incomplete) {
+          skippedIncomplete += res.skipped_incomplete;
+        }
         if (res.content) {
           parts.push(res.content);
           totalBytes += res.content.length;
@@ -447,6 +451,7 @@ export function createArchiveClient(session: AuthSession) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return { skippedIncomplete };
     },
   };
 }

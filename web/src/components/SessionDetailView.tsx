@@ -320,14 +320,22 @@ export function SessionDetailView({
   const handleExport = async (format: 'archive' | 'sft') => {
     setExportOpen(false);
     setExportStatus(`Exporting ${format.toUpperCase()}…`);
+    setError(null);
     try {
-      await client.downloadExport(
+      const res = await client.downloadExport(
         { scope: 'session', sessionId, format, days: 365 },
         (chunks, bytes) => {
           setExportStatus(`Exporting (${chunks} chunks · ${formatCompact(bytes)} B)…`);
         }
       );
       setExportStatus(null);
+      if (res.skippedIncomplete > 0) {
+        setError(
+          `Export downloaded, but ${formatNumber(res.skippedIncomplete)} incomplete record${
+            res.skippedIncomplete === 1 ? ' was' : 's were'
+          } skipped.`
+        );
+      }
     } catch (err) {
       setExportStatus(null);
       setError(err instanceof Error ? err.message : 'Export failed');
@@ -724,6 +732,19 @@ export function SessionDetailView({
                                         <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-zinc-300 max-h-72 overflow-y-auto">
                                           {entry.text}
                                         </pre>
+                                      )}
+
+                                      {entry.truncated && (
+                                        <div className="mt-1.5 flex items-center gap-2 text-[11px] text-amber-400/90">
+                                          <span>Preview truncated at 4,000 chars.</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => openRawRequest(rec.request_id)}
+                                            className="text-[#d97757] hover:underline cursor-pointer"
+                                          >
+                                            Open raw payload
+                                          </button>
+                                        </div>
                                       )}
 
                                       {isToolCall && outKey && toolOutputs[outKey] !== undefined && (

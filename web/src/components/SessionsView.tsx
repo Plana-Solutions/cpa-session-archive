@@ -182,11 +182,19 @@ export function SessionsView({
   const handleExportAll = async (format: 'archive' | 'sft') => {
     setExportOpen(false);
     setExportStatus(`Exporting ${format.toUpperCase()}…`);
+    setError(null);
     try {
-      await client.downloadExport({ scope: 'all', format, days }, (chunks, bytes) => {
+      const res = await client.downloadExport({ scope: 'all', format, days }, (chunks, bytes) => {
         setExportStatus(`Exporting (${chunks} chunks · ${formatCompact(bytes)} B)…`);
       });
       setExportStatus(null);
+      if (res.skippedIncomplete > 0) {
+        setError(
+          `Export downloaded, but ${formatNumber(res.skippedIncomplete)} incomplete record${
+            res.skippedIncomplete === 1 ? ' was' : 's were'
+          } skipped.`
+        );
+      }
     } catch (err) {
       setExportStatus(null);
       setError(err instanceof Error ? err.message : 'Export failed');
