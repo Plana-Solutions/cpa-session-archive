@@ -6,9 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+var ErrUnknownBlobEncoding = errors.New("unknown blob encoding")
 
 const inlineThreshold = 1024
 const subtreeThreshold = 16 << 10
@@ -178,7 +181,7 @@ func expandValue(v any, load func(string) ([]byte, error)) (any, error) {
 				}
 				return expandValue(nested, load)
 			default:
-				return nil, fmt.Errorf("unknown blob encoding %q", enc)
+				return nil, fmt.Errorf("%w %q", ErrUnknownBlobEncoding, enc)
 			}
 		}
 		for k := range x {
