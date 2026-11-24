@@ -1,10 +1,27 @@
 {
-  "name": "cpa-session-archive-ui-tests",
+  "name": "cpa-session-archive-ui",
   "private": true,
+  "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build:ui": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test:ui": "playwright test --config playwright.ui.config.cjs",
     "test:e2e": "playwright test --config playwright.config.cjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0"
+    "@playwright/test": "^1.55.0",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "lucide-react": "^1.79.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.11.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4"
   }
 }

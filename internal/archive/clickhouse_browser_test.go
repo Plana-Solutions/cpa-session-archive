@@ -34,7 +34,12 @@ func TestClickHouseBrowserServer(t *testing.T) {
 			w.Write([]byte(`{"items":[{"apiKeyHash":"sha256:mock-key-hash","alias":"长文本测试 Key"}]}`))
 			return
 		}
-		if path == "/" || path == "/management.html" {
+		if path == "/v0/management/plugins/cpa-key-policy/identities" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"identities":[]}`))
+			return
+		}
+		if path == "/" || path == "/archive" || path == "/management.html" {
 			path = "/v0/resource/plugins/" + pluginID + "/index.html"
 		}
 		if path == "/external.js" {

@@ -28,6 +28,8 @@ jobs:
       - run: go test ./...
       - run: go test -race ./internal/archive -run '^(TestSerializedExport|TestExportCacheConcurrency)'
       - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run build:ui
       - run: bunx playwright install --with-deps --only-shell chromium
       - run: bun run test:e2e
       - run: CGO_ENABLED=1 go build -tags cshared -buildmode=c-shared -o /tmp/cpa-session-archive.so ./cmd/cpa-session-archive

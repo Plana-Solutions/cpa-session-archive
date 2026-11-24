@@ -5,40 +5,20 @@ import (
 	"testing"
 )
 
-func TestManagementUIContainsBilingualFacetedExperience(t *testing.T) {
+func TestManagementUIContainsStandaloneFleethouseApp(t *testing.T) {
 	checks := [][]byte{
-		[]byte("Projects and repositories"),
-		[]byte("项目与代码库"),
-		[]byte("Faceted filters"),
-		[]byte("分面筛选"),
-		[]byte("MutationObserver"),
-		[]byte("data-i18n"),
-		[]byte("#/sessions/"),
-		[]byte("Download this session"),
-		[]byte("Query outline"),
-		[]byte("previousPage"),
-		[]byte("toolCallsAndResults"),
-		[]byte("downloadExport('all')"),
-		[]byte("#/sessions/"),
-		[]byte("/raw/"),
-		[]byte("/tools/"),
-		[]byte("/request-context?id="),
-		[]byte("/request-view?id="),
-		[]byte("extractToolEntriesFromValues"),
-		[]byte("goLastSessionPage"),
-		[]byte("downloadReady"),
-		[]byte("languageHint"),
-		[]byte("parent.document.documentElement"),
-		[]byte("normalizeKeyHash"),
-		[]byte(`name === "key.id" || name === "caller.scope"`),
-		[]byte("event.key==='Enter'"),
-		[]byte("thread_sources"),
-		[]byte("/turns?session_id="),
-		[]byte("renderTurnProcess"),
-		[]byte("openTurnTool"),
-		[]byte("backToTurn"),
-		[]byte("renderExpandableTurnText"),
-		[]byte("turn-text-detail"),
+		[]byte("enc::v2::"),
+		[]byte("enc::v1::"),
+		[]byte("cli-proxy-auth"),
+		[]byte("Fleethouse"),
+		[]byte("ClickHouse"),
+		[]byte("/v0/management/plugins/cpa-session-archive"),
+		[]byte("/cancel-search"),
+		[]byte("/request-context"),
+		[]byte("/request-view"),
+		[]byte("/turn-text"),
+		[]byte("/export"),
+		[]byte("Standalone"),
 	}
 	for _, check := range checks {
 		if !bytes.Contains(managementHTML, check) {
