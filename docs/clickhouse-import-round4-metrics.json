@@ -1,0 +1,292 @@
+{
+  "newest": {
+    "seconds": 2700.5675200498663,
+    "import_exit": 0,
+    "deriver_exit": 0,
+    "max_lag": 608,
+    "peak_cgroup_memory": 1199767552,
+    "sizes": [
+      {
+        "table": "body_blobs",
+        "parts": 4,
+        "rows": 9870,
+        "compressed_bytes": 18970439,
+        "disk_bytes": 18987949
+      },
+      {
+        "table": "deriver_progress",
+        "parts": 2,
+        "rows": 51,
+        "compressed_bytes": 277,
+        "disk_bytes": 667
+      },
+      {
+        "table": "external_messages",
+        "parts": 4,
+        "rows": 6423,
+        "compressed_bytes": 6809819,
+        "disk_bytes": 6814413
+      },
+      {
+        "table": "request_facts",
+        "parts": 3,
+        "rows": 1698,
+        "compressed_bytes": 6437489,
+        "disk_bytes": 6452154
+      },
+      {
+        "table": "requests",
+        "parts": 4,
+        "rows": 1698,
+        "compressed_bytes": 9472094,
+        "disk_bytes": 9487601
+      },
+      {
+        "table": "usage",
+        "parts": 3,
+        "rows": 1698,
+        "compressed_bytes": 196402,
+        "disk_bytes": 202070
+      }
+    ],
+    "queries": {
+      "peak_query_memory": 61629084,
+      "memory_exceptions": 0,
+      "parts_exceptions": 0
+    },
+    "gate": {
+      "archive_native_events": 6423,
+      "archive_native_sessions": 50,
+      "byte_exact": 1698,
+      "clients": {
+        "OpenAI": 296,
+        "ai": 2,
+        "claude-code": 1025,
+        "codex_cli_rs": 362,
+        "node": 12,
+        "unknown": 1
+      },
+      "codex_rows": 362,
+      "codex_without_prefix": 0,
+      "count_tokens_identity_mismatches": 0,
+      "count_tokens_outside_claude": 19,
+      "count_tokens_rows": 20,
+      "derived_conversations_with_bodies": 73,
+      "leak_rows": 0,
+      "live_extractor_sessions_with_bodies": 73,
+      "live_identity_mismatches": 0,
+      "live_overlap": 0,
+      "missing_body_requests": 1,
+      "no_model_rows": 0,
+      "one_to_one_gate": true,
+      "parse_status": {
+        "empty": 1,
+        "ok": 1696,
+        "partial": 1
+      },
+      "raw_archive_body_session_ids": 75,
+      "released_extractor_mismatches": 0,
+      "rows": {
+        "external_messages": 6423,
+        "request_facts": 1698,
+        "requests": 1698,
+        "usage": 1698
+      },
+      "rows_scanned": 21387,
+      "secrets_known": 32
+    },
+    "proxy_seconds": 2586.354,
+    "proxy_rows": 1698,
+    "proxy_rows_per_second": 0.6565226569912704,
+    "total_import_seconds": 2696.009,
+    "native_seconds": 109.6550000000002,
+    "native_rows_per_second": 58.57462040034643,
+    "proxy_compressed_bytes": 35076424,
+    "proxy_bytes_per_row": 20657.49352179034,
+    "import_phase_peak_cgroup_memory": 1199767552,
+    "memory_events_last": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n",
+    "max_sampled_cgroup_memory_current": 1189818368,
+    "deriver_failures": {
+      "pass failed": 7,
+      "eof": 6,
+      "deadline exceeded": 1,
+      "body incomplete": 0
+    }
+  },
+  "oldest": {
+    "seconds": 508.6970716789365,
+    "import_exit": 0,
+    "deriver_exit": 0,
+    "max_lag": 32,
+    "peak_cgroup_memory": 1199767552,
+    "sizes": [
+      {
+        "table": "body_blobs",
+        "parts": 6,
+        "rows": 3210,
+        "compressed_bytes": 7679668,
+        "disk_bytes": 7688213
+      },
+      {
+        "table": "request_facts",
+        "parts": 3,
+        "rows": 496,
+        "compressed_bytes": 2394176,
+        "disk_bytes": 2404018
+      },
+      {
+        "table": "requests",
+        "parts": 2,
+        "rows": 496,
+        "compressed_bytes": 1527193,
+        "disk_bytes": 1532988
+      },
+      {
+        "table": "usage",
+        "parts": 4,
+        "rows": 496,
+        "compressed_bytes": 46759,
+        "disk_bytes": 54077
+      }
+    ],
+    "queries": {
+      "peak_query_memory": 69953503,
+      "memory_exceptions": 0,
+      "parts_exceptions": 0
+    },
+    "gate": {
+      "archive_native_events": 0,
+      "archive_native_sessions": 0,
+      "byte_exact": 496,
+      "clients": {
+        "T3 Code": 476,
+        "codex_exec": 18,
+        "unknown": 2
+      },
+      "codex_rows": 494,
+      "codex_without_prefix": 0,
+      "count_tokens_identity_mismatches": 0,
+      "count_tokens_outside_claude": 0,
+      "count_tokens_rows": 0,
+      "derived_conversations_with_bodies": 31,
+      "leak_rows": 0,
+      "live_extractor_sessions_with_bodies": 31,
+      "live_identity_mismatches": 0,
+      "live_overlap": 0,
+      "missing_body_requests": 2,
+      "no_model_rows": 0,
+      "one_to_one_gate": true,
+      "parse_status": {
+        "empty": 2,
+        "ok": 468,
+        "partial": 26
+      },
+      "raw_archive_body_session_ids": 30,
+      "released_extractor_mismatches": 0,
+      "rows": {
+        "external_messages": 0,
+        "request_facts": 496,
+        "requests": 496,
+        "usage": 496
+      },
+      "rows_scanned": 4698,
+      "secrets_known": 32
+    },
+    "proxy_seconds": 491.592,
+    "proxy_rows": 496,
+    "proxy_rows_per_second": 1.008966785464369,
+    "total_import_seconds": 491.592,
+    "proxy_compressed_bytes": 11647796,
+    "proxy_bytes_per_row": 23483.459677419356,
+    "import_phase_peak_cgroup_memory": 1199767552,
+    "memory_events_last": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 175\n",
+    "max_sampled_cgroup_memory_current": 1037041664,
+    "deriver_failures": {
+      "pass failed": 1,
+      "eof": 1,
+      "deadline exceeded": 0,
+      "body incomplete": 0
+    }
+  },
+  "pause": {
+    "pause_unix": 1795086363.6788876,
+    "resume_unix": 1795087265.397077,
+    "paused_seconds": 901.7181914001703
+  },
+  "recovery_seconds": 301.4915590286255,
+  "population": {
+    "requests": {
+      "n": 1698,
+      "ids": 1698,
+      "logical_body_bytes": 2256963796,
+      "max_body_bytes": 11288316
+    },
+    "blobs": {
+      "n": 9870,
+      "keys": 9870,
+      "raw_bytes": 47464687
+    }
+  },
+  "identity": {
+    "sample": 1698,
+    "live_overlap": 1698,
+    "exact_identities": 1678,
+    "accepted_claude_parent_merges": 20,
+    "unexpected_mismatches": 0,
+    "client_mismatches": 0,
+    "codex": 362
+  },
+  "signals": [
+    {
+      "signal": "SIGHUP",
+      "exit": 1,
+      "finished_request_and_usage": true,
+      "checkpoint_last_id": 8
+    },
+    {
+      "signal": "SIGTERM",
+      "exit": 1,
+      "finished_request_and_usage": true,
+      "checkpoint_last_id": 8
+    },
+    {
+      "signal": "SIGINT",
+      "exit": 1,
+      "finished_request_and_usage": true,
+      "checkpoint_last_id": 8
+    }
+  ],
+  "observed_peak_cgroup_memory": {
+    "ch": 1199767552,
+    "import": 260771840,
+    "deriver": 115445760
+  },
+  "projection_compressed_bytes": {
+    "newest": 3070290791.5355654,
+    "oldest": 3471250173.5608325
+  },
+  "final_clickhouse_memory": {
+    "peak": 1199767552,
+    "events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 175\n"
+  },
+  "server_settings": [
+    {
+      "name": "max_server_memory_usage_to_ram_ratio",
+      "value": "0.75"
+    },
+    {
+      "name": "mark_cache_size",
+      "value": "67108864"
+    },
+    {
+      "name": "merge_max_block_size",
+      "value": "256"
+    }
+  ],
+  "query_exceptions": [
+    {
+      "exception_code": 60,
+      "count()": 4
+    }
+  ]
+}
