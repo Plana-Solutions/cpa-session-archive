@@ -1,13 +1,16 @@
 @import "tailwindcss";
 
 @layer base {
-  :root {
+  :root,
+  html {
     color-scheme: dark;
+    background: #000000;
+    color: #ededed;
   }
 
   html,
   body {
-    background-color: #000000;
+    background: #000000;
     color: #ededed;
     font-family:
       ui-sans-serif,
@@ -17,12 +20,126 @@
       "Segoe UI",
       Roboto,
       sans-serif;
+    font-size: 16px;
     font-feature-settings: "tnum" 1;
     font-variant-numeric: tabular-nums;
   }
 
   * {
     border-color: #1f1f23;
+    scrollbar-color: #27272a #000000;
+  }
+
+  /* Neutralize CPAMP's injected host stylesheet (:where(...) rules at 0,0,0
+     specificity prepended before our stylesheet) while keeping specificity at
+     0,0,0 so every Tailwind utility class (>= 0,1,0) wins cleanly. */
+  :where(h1, h2, h3, h4, h5, h6) {
+    color: inherit;
+    letter-spacing: inherit;
+  }
+
+  :where(a, a:hover) {
+    color: inherit;
+    text-decoration-color: currentColor;
+  }
+
+  :where(hr) {
+    border-color: #1f1f23;
+  }
+
+  :where(
+    button,
+    input[type="button"],
+    input[type="reset"],
+    input[type="submit"],
+    [role="button"]
+  ) {
+    min-height: 0;
+    border: 0 solid #1f1f23;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    transition: none;
+  }
+
+  :where(
+    button:hover:not(:disabled),
+    input[type="button"]:hover:not(:disabled),
+    input[type="reset"]:hover:not(:disabled),
+    [role="button"]:hover:not([aria-disabled="true"]),
+    button[type="submit"],
+    input[type="submit"],
+    button[type="submit"]:hover:not(:disabled),
+    input[type="submit"]:hover:not(:disabled),
+    .btn-primary,
+    .button-primary,
+    button.primary,
+    input.primary,
+    [role="button"].primary,
+    .btn-primary:hover,
+    .button-primary:hover,
+    button.primary:hover:not(:disabled),
+    input.primary:hover:not(:disabled),
+    [role="button"].primary:hover:not([aria-disabled="true"])
+  ) {
+    border-color: #1f1f23;
+    background: transparent;
+    color: inherit;
+  }
+
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea
+  ) {
+    min-height: 0;
+    border: 0 solid #1f1f23;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    box-shadow: none;
+  }
+
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+    select:focus,
+    textarea:focus
+  ) {
+    border-color: #1f1f23;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :where(button:disabled, input:disabled, select:disabled, textarea:disabled) {
+    opacity: 1;
+  }
+
+  :where(table, thead, th, td, pre, code, kbd, samp) {
+    border-color: #1f1f23;
+    background: transparent;
+    color: inherit;
+  }
+
+  :where(
+    .card,
+    .panel,
+    .box,
+    .tile,
+    .widget,
+    .surface,
+    [class*="card"],
+    [class*="panel"]
+  ) {
+    border-color: #1f1f23;
+    background: transparent;
+    color: inherit;
+  }
+
+  :where(:focus-visible) {
+    outline: 2px solid #52525b;
+    outline-offset: 2px;
   }
 }
 
@@ -37,6 +154,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
+  border: 0;
   background: #27272a;
   border-radius: 9999px;
 }
