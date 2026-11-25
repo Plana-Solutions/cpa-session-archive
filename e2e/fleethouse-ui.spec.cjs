@@ -153,6 +153,7 @@ test('remains cleanly dark-styled when CPAMP injects its unlayered light host st
 
   await page.goto('/#/');
   await expect(page.getByRole('heading', { name: 'Fleet Insights' })).toBeVisible();
+  await expect(page.locator('[data-metric="requests"] [data-model="gpt-6.1-sol"]')).toBeVisible();
 
   // Mirror CPAMP management.html's zvt()/Ivt('white') host injection inside the plugin iframe:
   // attributes on <html> + an unlayered <style id="cpamp-plugin-host-style"> inserted BEFORE our <style>.
